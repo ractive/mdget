@@ -1,0 +1,208 @@
+name: Release
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  version-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7 # stable
+
+      - name: Verify tag matches Cargo.toml version
+        run: |
+          TAG="${{ github.event.release.tag_name }}"
+          CARGO_VERSION=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "mdget-cli") | .version')
+          TAG_VERSION="${TAG#v}"
+          echo "Git tag version:   $TAG_VERSION"
+          echo "Cargo.toml version: $CARGO_VERSION"
+          if [ "$TAG_VERSION" != "$CARGO_VERSION" ]; then
+            echo "ERROR: tag '$TAG' does not match Cargo.toml version '$CARGO_VERSION'"
+            exit 1
+          fi
+
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7 # stable
+
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+
+      - name: Install security tools
+        uses: taiki-e/install-action@a1df9120380005ebdc788c62449b841b205541dd # v2
+        with:
+          tool: cargo-audit,cargo-deny
+
+      - name: Audit dependencies for known vulnerabilities
+        run: cargo audit
+
+      - name: Check licenses, advisories, bans, and sources
+        run: cargo deny check
+
+  build:
+    needs: [version-check, security]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+            cross: true
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            cross: true
+          - target: aarch64-unknown-linux-musl
+            os: ubuntu-latest
+            cross: true
+          - target: aarch64-apple-darwin
+            os: macos-latest
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+          - target: aarch64-pc-windows-msvc
+            os: windows-latest
+            skip_tests: true
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7 # stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+
+      - name: Install cross
+        if: matrix.cross
+        uses: taiki-e/install-action@a1df9120380005ebdc788c62449b841b205541dd # v2
+        with:
+          tool: cross
+
+      - name: Build release
+        run: ${{ matrix.cross && 'cross' || 'cargo' }} build --release --target ${{ matrix.target }}
+
+      - name: Run tests
+        if: "!matrix.skip_tests"
+        run: ${{ matrix.cross && 'cross' || 'cargo' }} test --workspace --target ${{ matrix.target }}
+
+      - name: Verify CLI runs
+        if: "!matrix.cross && !matrix.skip_tests"
+        run: cargo run --release --target ${{ matrix.target }} -p mdget-cli -- --help
+
+      - name: Package (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          cd target/${{ matrix.target }}/release
+          tar czf ../../../mdget-${{ matrix.target }}.tar.gz mdget
+          cd ../../..
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          cd target/${{ matrix.target }}/release
+          7z a ../../../mdget-${{ matrix.target }}.zip mdget.exe
+          cd ../../..
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: mdget-${{ matrix.target }}
+          path: mdget-${{ matrix.target }}.*
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Generate SHA256SUMS
+        run: |
+          cd artifacts
+          sha256sum * > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Upload assets to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ github.event.release.tag_name }}" artifacts/*
+
+  crates-io:
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7 # stable
+
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+
+      - name: Verify CARGO_TOKEN is set
+        env:
+          CARGO_TOKEN: ${{ secrets.CARGO_TOKEN }}
+        shell: bash
+        run: |
+          if [ -z "${CARGO_TOKEN}" ]; then
+            echo "ERROR: CARGO_TOKEN secret is not set"
+            exit 1
+          fi
+
+      - name: Publish mdget-core to crates.io
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_TOKEN }}
+        run: |
+          output=$(cargo publish --package mdget-core --locked 2>&1) && exit 0
+          if echo "$output" | grep -q 'already uploaded'; then
+            echo "mdget-core already published, skipping."
+          else
+            echo "$output" >&2
+            exit 1
+          fi
+
+      - name: Publish mdget-cli to crates.io
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_TOKEN }}
+        run: |
+          set -euo pipefail
+          max_attempts=10
+          delay=15
+          for attempt in $(seq 1 "$max_attempts"); do
+            echo "Publishing mdget-cli (attempt $attempt/$max_attempts)..."
+            if output=$(cargo publish --package mdget-cli --locked 2>&1); then
+              echo "$output"
+              echo "mdget-cli published successfully."
+              exit 0
+            fi
+            echo "$output"
+            if echo "$output" | grep -qiE 'failed to select a version|no matching package named|depends on'; then
+              if [ "$attempt" -eq "$max_attempts" ]; then
+                echo "ERROR: giving up after $max_attempts attempts" >&2
+                exit 1
+              fi
+              echo "Index not yet updated, waiting ${delay}s..."
+              sleep "$delay"
+              delay=$((delay * 2))
+            else
+              echo "ERROR: cargo publish failed with a non-index error" >&2
+              exit 1
+            fi
+          done

@@ -1,0 +1,42 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+default-members = ["crates/mdget-cli"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+repository = "https://github.com/ractive/mdget"
+
+[workspace.dependencies]
+# Internal crates
+mdget-core = { path = "crates/mdget-core", version = "0.1.0" }
+
+# External dependencies
+anyhow = "1"
+assert_cmd = "2"
+clap = "4.6.0"
+predicates = "3"
+serde = { version = "1", features = ["derive"] }
+tempfile = "3"
+
+[workspace.lints.clippy]
+# Enable the full pedantic group, then allow lints we intentionally skip.
+pedantic = { level = "warn", priority = -1 }
+
+# Intentionally allowed — not worth the noise/churn:
+must_use_candidate = "allow"
+return_self_not_must_use = "allow"
+doc_markdown = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+too_many_lines = "allow"
+module_name_repetitions = "allow"
+struct_excessive_bools = "allow"
+
+[profile.release]
+codegen-units = 1
+lto = true
+panic = "abort"
+strip = true
