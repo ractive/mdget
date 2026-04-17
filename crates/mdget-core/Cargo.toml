@@ -1,0 +1,14 @@
+[package]
+name = "mdget-core"
+description = "Core library for mdget"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+readme = "../../README.md"
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
