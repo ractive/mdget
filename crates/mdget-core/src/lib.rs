@@ -1,13 +1,7 @@
-pub fn greeting() -> &'static str {
-    "Hello from mdget!"
-}
+mod extract;
+mod fetch;
+mod filename;
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_greeting() {
-        assert_eq!(greeting(), "Hello from mdget!");
-    }
-}
+pub use extract::{ExtractOptions, ExtractResult, extract};
+pub use fetch::{FetchOptions, FetchResult, fetch};
+pub use filename::generate_filename;
