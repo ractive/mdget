@@ -145,7 +145,13 @@ fn run_fetch(url_str: &str, cli: &Cli) -> anyhow::Result<()> {
     )?;
 
     let content_type = fetch_result.content_type.as_deref().unwrap_or("");
-    let mime_type = content_type.split(';').next().unwrap_or("").trim();
+    let mime_type = content_type
+        .split(';')
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase();
+    let mime_type = mime_type.as_str();
 
     let (output_text, title) = match mime_type {
         "text/html" | "application/xhtml+xml" | "" => {
@@ -180,23 +186,28 @@ fn run_fetch(url_str: &str, cli: &Cli) -> anyhow::Result<()> {
         }
     };
 
+    // Ensure output always ends with a trailing newline for consistency.
+    let final_output = if output_text.ends_with('\n') {
+        output_text
+    } else {
+        format!("{output_text}\n")
+    };
+
     if let Some(ref path) = cli.output {
-        std::fs::write(path, &output_text).with_context(|| format!("failed to write to {path}"))?;
+        std::fs::write(path, &final_output)
+            .with_context(|| format!("failed to write to {path}"))?;
         if !cli.quiet {
             eprintln!("Saved to {path}");
         }
     } else if cli.auto_filename {
         let filename = mdget_core::generate_filename(title.as_deref(), &fetch_result.final_url);
-        std::fs::write(&filename, &output_text)
+        std::fs::write(&filename, &final_output)
             .with_context(|| format!("failed to write to {filename}"))?;
         if !cli.quiet {
             eprintln!("Saved to {filename}");
         }
     } else {
-        print!("{output_text}");
-        if !output_text.ends_with('\n') {
-            println!();
-        }
+        print!("{final_output}");
     }
 
     Ok(())

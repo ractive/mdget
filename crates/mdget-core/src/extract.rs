@@ -70,41 +70,38 @@ fn clean_line(line: &str, out: &mut String) {
     // (i.e. an ordered-list marker).  If so, we must leave that first `\.` intact.
     let ordered_list_prefix_len = ordered_list_prefix(line);
 
-    let chars: Vec<char> = line.chars().collect();
-    let mut i = 0;
+    let mut chars = line.char_indices().peekable();
 
-    while i < chars.len() {
-        if chars[i] == '\\' && i + 1 < chars.len() {
-            let next = chars[i + 1];
+    while let Some((byte_offset, ch)) = chars.next() {
+        if ch == '\\'
+            && let Some(&(_, next)) = chars.peek()
+        {
             match next {
                 '(' | ')' => {
                     // Parentheses never need escaping in CommonMark prose — drop the backslash.
                     out.push(next);
-                    i += 2;
+                    chars.next();
                     continue;
                 }
                 '.' => {
                     // Keep the escape only when this `\.` is the dot of an ordered-list marker
                     // at the very start of the line (e.g. `1\.` or `12\.`).
                     // `ordered_list_prefix_len` is the byte offset of the backslash in that case.
-                    let byte_offset: usize = chars[..i].iter().map(|c| c.len_utf8()).sum();
                     if ordered_list_prefix_len > 0 && byte_offset == ordered_list_prefix_len {
                         // Preserve both the backslash and the dot.
                         out.push('\\');
                         out.push('.');
-                        i += 2;
-                        continue;
+                    } else {
+                        // All other `\.` sequences are unnecessary — drop the backslash.
+                        out.push('.');
                     }
-                    // All other `\.` sequences are unnecessary — drop the backslash.
-                    out.push('.');
-                    i += 2;
+                    chars.next();
                     continue;
                 }
                 _ => {}
             }
         }
-        out.push(chars[i]);
-        i += 1;
+        out.push(ch);
     }
 }
 

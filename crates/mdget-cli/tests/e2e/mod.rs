@@ -6,7 +6,6 @@ use std::thread;
 
 /// Spawn a one-shot HTTP server that returns the given status, content-type, and body.
 /// Returns the URL to connect to. The server handles exactly one request then shuts down.
-#[allow(dead_code)]
 fn spawn_http_server(status: u16, content_type: &str, body: &[u8]) -> String {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
