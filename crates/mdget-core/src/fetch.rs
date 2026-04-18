@@ -22,7 +22,13 @@ pub struct FetchResult {
 
 pub fn fetch(url: &str, options: &FetchOptions) -> anyhow::Result<FetchResult> {
     // Validate URL before making the request.
-    Url::parse(url).with_context(|| format!("invalid URL: {url}"))?;
+    let parsed = Url::parse(url).with_context(|| format!("invalid URL: {url}"))?;
+
+    // Reject non-HTTP(S) schemes early — reqwest would produce a confusing error.
+    let scheme = parsed.scheme();
+    if scheme != "http" && scheme != "https" {
+        anyhow::bail!("unsupported URL scheme '{scheme}' — only http and https are supported");
+    }
 
     let user_agent = options
         .user_agent

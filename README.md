@@ -5,7 +5,7 @@ Fetch a web page, extract the main content using a readability algorithm (like b
 ## Installation
 
 ```
-cargo install mdget
+cargo install mdget-cli
 ```
 
 ## Usage

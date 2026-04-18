@@ -5,7 +5,7 @@ date: 2026-04-17
 tags:
   - iteration
   - setup
-status: in-progress
+status: completed
 branch: iter-1/project-init
 ---
 
@@ -29,17 +29,17 @@ mdget is a new CLI tool. The project structure, CI/CD, and code quality gates ar
 - [x] Add deny.toml for dependency auditing
 - [x] Add .gitignore, LICENSE, CLAUDE.md
 - [x] Create kb/ folder with this iteration file
-- [ ] Initialize git repo, verify quality gates pass, create initial commit
+- [x] Initialize git repo, verify quality gates pass, create initial commit
 
 ## Quality Gates
 
-- [ ] `cargo fmt`
-- [ ] `cargo clippy --workspace --all-targets -- -D warnings`
-- [ ] `cargo test --workspace -q`
+- [x] `cargo fmt`
+- [x] `cargo clippy --workspace --all-targets -- -D warnings`
+- [x] `cargo test --workspace -q`
 
 ## Acceptance Criteria
 
-- [ ] `cargo run` prints "Hello from mdget!"
-- [ ] All tests pass on workspace level
-- [ ] CI workflow is ready for GitHub Actions
-- [ ] Release workflow covers multi-platform builds and crates.io publishing
+- [x] `cargo run` prints "Hello from mdget!"
+- [x] All tests pass on workspace level
+- [x] CI workflow is ready for GitHub Actions
+- [x] Release workflow covers multi-platform builds and crates.io publishing

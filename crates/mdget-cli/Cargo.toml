@@ -22,8 +22,6 @@ workspace = true
 mdget-core = { workspace = true }
 anyhow = { workspace = true }
 clap = { workspace = true, features = ["derive", "wrap_help"] }
-slug = { workspace = true }
-url = { workspace = true }
 
 [dev-dependencies]
 assert_cmd = { workspace = true }

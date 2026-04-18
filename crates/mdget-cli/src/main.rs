@@ -201,6 +201,9 @@ fn run_deinit(global: bool) -> anyhow::Result<()> {
     // Strip managed section from CLAUDE.md
     strip_managed_section(&claude_md_path)?;
 
+    // Remove the base .claude/ dir itself if now empty
+    remove_dir_if_empty(&base_dir)?;
+
     Ok(())
 }
 
@@ -236,7 +239,7 @@ fn upsert_managed_section(claude_md_path: &std::path::Path) -> anyhow::Result<()
         if existing.is_empty() {
             MANAGED_SECTION_CONTENT.to_string()
         } else if existing.ends_with('\n') {
-            format!("{existing}\n{MANAGED_SECTION_CONTENT}\n")
+            format!("{existing}{MANAGED_SECTION_CONTENT}\n")
         } else {
             format!("{existing}\n\n{MANAGED_SECTION_CONTENT}\n")
         }
@@ -256,6 +259,8 @@ fn upsert_managed_section(claude_md_path: &std::path::Path) -> anyhow::Result<()
     Ok(())
 }
 
+/// Returns the content with the managed section replaced, or the original content unchanged
+/// if the start marker is present but the end marker is missing (malformed section).
 fn replace_managed_section(content: &str) -> String {
     let mut result = String::with_capacity(content.len());
     let mut inside = false;
@@ -279,6 +284,11 @@ fn replace_managed_section(content: &str) -> String {
         }
         result.push_str(line);
         result.push('\n');
+    }
+
+    // If we never found the end marker the section is malformed — return original unchanged.
+    if inside {
+        return content.to_string();
     }
 
     result
@@ -314,6 +324,15 @@ fn strip_managed_section(claude_md_path: &std::path::Path) -> anyhow::Result<()>
         }
         result.push_str(line);
         result.push('\n');
+    }
+
+    // If the end marker was never found the section is malformed — leave file unchanged.
+    if inside {
+        eprintln!(
+            "Warning: malformed managed section in {} (missing end marker) — leaving file unchanged",
+            claude_md_path.display()
+        );
+        return Ok(());
     }
 
     // Trim trailing blank lines but keep a final newline if there's content

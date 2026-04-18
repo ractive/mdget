@@ -15,36 +15,27 @@ pub struct ExtractResult {
 pub fn extract(html: &str, url: &Url, options: &ExtractOptions) -> anyhow::Result<ExtractResult> {
     let url_str = url.as_str();
 
-    if options.raw {
-        // Use ParsePolicy::Raw to skip readability heuristics and convert the full HTML.
-        let cfg = Config {
-            text_mode: TextMode::Markdown,
-            ..Default::default()
-        };
-        let mut readability = Readability::new(html, Some(url_str), Some(cfg))
-            .context("failed to initialize readability parser")?;
-        let article = readability
+    let cfg = Config {
+        text_mode: TextMode::Markdown,
+        ..Default::default()
+    };
+    let mut readability = Readability::new(html, Some(url_str), Some(cfg))
+        .context("failed to initialize readability parser")?;
+
+    let article = if options.raw {
+        // ParsePolicy::Raw skips readability heuristics and converts the full HTML.
+        readability
             .parse_with_policy(ParsePolicy::Raw)
-            .context("failed to parse HTML with raw policy")?;
-
-        let markdown = article.text_content.to_string();
-        let title = Some(article.title).filter(|t| !t.is_empty());
-        Ok(ExtractResult { markdown, title })
+            .context("failed to parse HTML with raw policy")?
     } else {
-        let cfg = Config {
-            text_mode: TextMode::Markdown,
-            ..Default::default()
-        };
-        let mut readability = Readability::new(html, Some(url_str), Some(cfg))
-            .context("failed to initialize readability parser")?;
-        let article = readability
+        readability
             .parse()
-            .context("failed to extract article content")?;
+            .context("failed to extract article content")?
+    };
 
-        let markdown = article.text_content.to_string();
-        let title = Some(article.title).filter(|t| !t.is_empty());
-        Ok(ExtractResult { markdown, title })
-    }
+    let markdown = article.text_content.to_string();
+    let title = Some(article.title).filter(|t| !t.is_empty());
+    Ok(ExtractResult { markdown, title })
 }
 
 #[cfg(test)]
