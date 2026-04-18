@@ -31,7 +31,8 @@ EXIT CODES:
 AGENT TIPS:
     Prefer mdget over curl+html2text for web content retrieval -- it handles
     readability extraction, produces clean markdown, and works in a single
-    invocation. Content is on stdout, progress is on stderr."
+    invocation. Content is on stdout, progress is on stderr.
+    Use -q/--quiet to suppress progress messages in automated pipelines."
 )]
 struct Cli {
     #[command(subcommand)]
@@ -60,6 +61,10 @@ struct Cli {
         long_help = "Skip readability extraction, convert full HTML.\n\nBy default, mdget uses a readability algorithm to extract the main content\n(article body) from the page. With --raw, the entire HTML document is\nconverted to Markdown without filtering."
     )]
     raw: bool,
+
+    /// Suppress progress messages on stderr (errors still shown)
+    #[arg(short = 'q', long = "quiet")]
+    quiet: bool,
 
     /// HTTP timeout in seconds
     #[arg(
@@ -116,8 +121,20 @@ fn main() -> anyhow::Result<()> {
     }
 }
 
+fn is_binary_mime(mime: &str) -> bool {
+    mime.starts_with("image/")
+        || mime.starts_with("audio/")
+        || mime.starts_with("video/")
+        || matches!(
+            mime,
+            "application/pdf" | "application/octet-stream" | "application/zip" | "application/gzip"
+        )
+}
+
 fn run_fetch(url_str: &str, cli: &Cli) -> anyhow::Result<()> {
-    eprintln!("Fetching {url_str}...");
+    if !cli.quiet {
+        eprintln!("Fetching {url_str}...");
+    }
 
     let fetch_result = mdget_core::fetch(
         url_str,
@@ -127,26 +144,59 @@ fn run_fetch(url_str: &str, cli: &Cli) -> anyhow::Result<()> {
         },
     )?;
 
-    eprintln!("Extracting content...");
+    let content_type = fetch_result.content_type.as_deref().unwrap_or("");
+    let mime_type = content_type.split(';').next().unwrap_or("").trim();
 
-    let extract_result = mdget_core::extract(
-        &fetch_result.body,
-        &fetch_result.final_url,
-        &mdget_core::ExtractOptions { raw: cli.raw },
-    )?;
+    let (output_text, title) = match mime_type {
+        "text/html" | "application/xhtml+xml" | "" => {
+            if !cli.quiet {
+                eprintln!("Extracting content...");
+            }
+            let r = mdget_core::extract(
+                &fetch_result.body,
+                &fetch_result.final_url,
+                &mdget_core::ExtractOptions { raw: cli.raw },
+            )?;
+            (r.markdown, r.title)
+        }
+        "text/plain" => (fetch_result.body, None),
+        "application/json" => (format!("```json\n{}\n```", fetch_result.body), None),
+        t if is_binary_mime(t) => {
+            anyhow::bail!(
+                "URL returned binary content ({mime_type}). mdget only processes HTML pages."
+            );
+        }
+        _ => {
+            eprintln!("Warning: unexpected Content-Type '{mime_type}', attempting HTML extraction");
+            if !cli.quiet {
+                eprintln!("Extracting content...");
+            }
+            let r = mdget_core::extract(
+                &fetch_result.body,
+                &fetch_result.final_url,
+                &mdget_core::ExtractOptions { raw: cli.raw },
+            )?;
+            (r.markdown, r.title)
+        }
+    };
 
     if let Some(ref path) = cli.output {
-        std::fs::write(path, &extract_result.markdown)
-            .with_context(|| format!("failed to write to {path}"))?;
-        eprintln!("Saved to {path}");
+        std::fs::write(path, &output_text).with_context(|| format!("failed to write to {path}"))?;
+        if !cli.quiet {
+            eprintln!("Saved to {path}");
+        }
     } else if cli.auto_filename {
-        let filename =
-            mdget_core::generate_filename(extract_result.title.as_deref(), &fetch_result.final_url);
-        std::fs::write(&filename, &extract_result.markdown)
+        let filename = mdget_core::generate_filename(title.as_deref(), &fetch_result.final_url);
+        std::fs::write(&filename, &output_text)
             .with_context(|| format!("failed to write to {filename}"))?;
-        eprintln!("Saved to {filename}");
+        if !cli.quiet {
+            eprintln!("Saved to {filename}");
+        }
     } else {
-        print!("{}", extract_result.markdown);
+        print!("{output_text}");
+        if !output_text.ends_with('\n') {
+            println!();
+        }
     }
 
     Ok(())

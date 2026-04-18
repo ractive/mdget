@@ -18,6 +18,7 @@ impl Default for FetchOptions {
 pub struct FetchResult {
     pub body: String,
     pub final_url: Url,
+    pub content_type: Option<String>,
 }
 
 pub fn fetch(url: &str, options: &FetchOptions) -> anyhow::Result<FetchResult> {
@@ -53,9 +54,19 @@ pub fn fetch(url: &str, options: &FetchOptions) -> anyhow::Result<FetchResult> {
         anyhow::bail!("HTTP {status} fetching URL: {url}");
     }
 
+    let content_type = response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .map(std::string::ToString::to_string);
+
     let body = response
         .text()
         .with_context(|| format!("failed to read response body from: {url}"))?;
 
-    Ok(FetchResult { body, final_url })
+    Ok(FetchResult {
+        body,
+        final_url,
+        content_type,
+    })
 }
