@@ -17,9 +17,12 @@ mdget-core = { path = "crates/mdget-core", version = "0.1.0" }
 anyhow = "1"
 assert_cmd = "2"
 clap = "4.6.0"
+dom_smoothie = "0.17"
 predicates = "3"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls", "gzip", "brotli", "deflate", "charset"] }
 serde = { version = "1", features = ["derive"] }
 tempfile = "3"
+url = "2"
 
 [workspace.lints.clippy]
 # Enable the full pedantic group, then allow lints we intentionally skip.
