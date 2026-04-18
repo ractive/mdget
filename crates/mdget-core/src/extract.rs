@@ -33,9 +33,93 @@ pub fn extract(html: &str, url: &Url, options: &ExtractOptions) -> anyhow::Resul
             .context("failed to extract article content")?
     };
 
-    let markdown = article.text_content.to_string();
+    let markdown = clean_markdown_escapes(article.text_content.as_ref());
     let title = Some(article.title).filter(|t| !t.is_empty());
     Ok(ExtractResult { markdown, title })
+}
+
+/// Strips unnecessary backslash escapes introduced by dom_smoothie's markdown serialiser.
+///
+/// dom_smoothie escapes characters that CommonMark does not require to be escaped in
+/// normal prose (e.g. `\.`, `\(`, `\)`).  This function removes those superfluous
+/// escapes while preserving the one case where keeping `\.` matters: an ordered-list
+/// marker at the start of a line (`1\.`, `12\.`, …).
+fn clean_markdown_escapes(input: &str) -> String {
+    // Pre-allocate roughly the same capacity; escapes we remove shrink the string slightly.
+    let mut out = String::with_capacity(input.len());
+
+    // Split on '\n' and rejoin, inserting the separator between pieces only (not after
+    // the last one), so the output has the exact same trailing-newline behaviour as the
+    // input regardless of whether it ends with '\n' or not.
+    let mut lines = input.split('\n');
+
+    if let Some(first) = lines.next() {
+        clean_line(first, &mut out);
+        for line in lines {
+            out.push('\n');
+            clean_line(line, &mut out);
+        }
+    }
+
+    out
+}
+
+/// Process a single line, appending the cleaned result to `out`.
+fn clean_line(line: &str, out: &mut String) {
+    // Determine whether this line begins with one or more digits followed by `\.`
+    // (i.e. an ordered-list marker).  If so, we must leave that first `\.` intact.
+    let ordered_list_prefix_len = ordered_list_prefix(line);
+
+    let mut chars = line.char_indices().peekable();
+
+    while let Some((byte_offset, ch)) = chars.next() {
+        if ch == '\\'
+            && let Some(&(_, next)) = chars.peek()
+        {
+            match next {
+                '(' | ')' => {
+                    // Parentheses never need escaping in CommonMark prose — drop the backslash.
+                    out.push(next);
+                    chars.next();
+                    continue;
+                }
+                '.' => {
+                    // Keep the escape only when this `\.` is the dot of an ordered-list marker
+                    // at the very start of the line (e.g. `1\.` or `12\.`).
+                    // `ordered_list_prefix_len` is the byte offset of the backslash in that case.
+                    if ordered_list_prefix_len > 0 && byte_offset == ordered_list_prefix_len {
+                        // Preserve both the backslash and the dot.
+                        out.push('\\');
+                        out.push('.');
+                    } else {
+                        // All other `\.` sequences are unnecessary — drop the backslash.
+                        out.push('.');
+                    }
+                    chars.next();
+                    continue;
+                }
+                _ => {}
+            }
+        }
+        out.push(ch);
+    }
+}
+
+/// If `line` starts with one or more ASCII digits immediately followed by `\.`,
+/// returns the byte offset of the `\` (i.e. the number of digit bytes).
+/// Otherwise returns 0.
+fn ordered_list_prefix(line: &str) -> usize {
+    let bytes = line.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() && bytes[i].is_ascii_digit() {
+        i += 1;
+    }
+    // Must have at least one digit and be followed by `\.`
+    if i > 0 && i + 1 < bytes.len() && bytes[i] == b'\\' && bytes[i + 1] == b'.' {
+        i // byte offset of the backslash
+    } else {
+        0
+    }
 }
 
 #[cfg(test)]
@@ -81,5 +165,63 @@ mod tests {
         let opts = ExtractOptions { raw: true };
         let result = extract(SIMPLE_HTML, &url, &opts).unwrap();
         assert_eq!(result.title.as_deref(), Some("Test Page"));
+    }
+
+    // --- clean_markdown_escapes unit tests ---
+
+    #[test]
+    fn test_clean_dot_in_normal_text() {
+        // `\.` in the middle of a word should become `.`
+        assert_eq!(clean_markdown_escapes("Hello\\."), "Hello.");
+    }
+
+    #[test]
+    fn test_clean_parentheses() {
+        // `\(` and `\)` should always be unescaped
+        assert_eq!(clean_markdown_escapes("foo \\(bar\\)"), "foo (bar)");
+    }
+
+    #[test]
+    fn test_ordered_list_marker_preserved() {
+        // `1\.` at the start of a line must keep its backslash (ordered list prevention)
+        assert_eq!(clean_markdown_escapes("1\\. item"), "1\\. item");
+    }
+
+    #[test]
+    fn test_ordered_list_multi_digit_preserved() {
+        // Multi-digit numbers are also preserved
+        assert_eq!(clean_markdown_escapes("12\\. item"), "12\\. item");
+    }
+
+    #[test]
+    fn test_dot_after_digits_not_at_line_start() {
+        // `1\.` that is NOT at the start of the line should be unescaped
+        assert_eq!(
+            clean_markdown_escapes("word 1\\. something"),
+            "word 1. something"
+        );
+    }
+
+    #[test]
+    fn test_other_escapes_untouched() {
+        // Backslash before characters we do not handle (e.g. `*`) must be left as-is
+        assert_eq!(clean_markdown_escapes("\\*bold\\*"), "\\*bold\\*");
+    }
+
+    #[test]
+    fn test_multiline_mixed() {
+        let input = "Hello\\.\n1\\. first\nnot list 1\\. here";
+        let expected = "Hello.\n1\\. first\nnot list 1. here";
+        assert_eq!(clean_markdown_escapes(input), expected);
+    }
+
+    #[test]
+    fn test_trailing_newline_preserved() {
+        assert_eq!(clean_markdown_escapes("Hello\\.\n"), "Hello.\n");
+    }
+
+    #[test]
+    fn test_no_trailing_newline_preserved() {
+        assert_eq!(clean_markdown_escapes("Hello\\."), "Hello.");
     }
 }
