@@ -58,22 +58,6 @@ Fields are included only when available from the page. `title`, `source`, `fetch
 - **Images are noise for LLMs**: LLMs can't see images, so `![alt](url)` references waste tokens. `--no-images` strips them cleanly.
 - **Truncation is character-based**: token counting is model-specific and adds complexity. Characters are universal and predictable. Users can estimate tokens from character count.
 
-## Readability tuning flags (advanced)
+## Deferred: readability tuning flags
 
-Expose select dom_smoothie `Config` options as advanced CLI flags. These let users fix bad extractions without falling back to `--raw`. Show only in `--help` (not `-h`) to keep the simple interface clean.
-
-```
-mdget --char-threshold 200 <URL>         # lower = accept shorter articles (default 500)
-mdget --candidate-mode dom-smoothie <URL> # alternative content detection algorithm
-mdget --max-elements 50000 <URL>         # safety limit on DOM size (default unlimited)
-```
-
-See [[dom-query-escaping]] for research on these options.
-
-### Tasks (additional)
-
-- [ ] Add `--char-threshold` flag (maps to `dom_smoothie::Config::char_threshold`)
-- [ ] Add `--candidate-mode` flag (maps to `dom_smoothie::Config::candidate_select_mode`, values: `readability`, `dom-smoothie`)
-- [ ] Add `--max-elements` flag (maps to `dom_smoothie::Config::max_elements_to_parse`)
-- [ ] Hide these from `-h` short help, show only in `--help`
-- [ ] Add e2e tests for each flag
+dom_smoothie exposes config options (`char_threshold`, `candidate_select_mode`, `max_elements_to_parse`) that could theoretically improve extraction on edge-case pages. However, these are deep engine internals — if extraction fails, `--raw` is the pragmatic escape hatch. Adding niche flags would clutter the CLI for negligible benefit. Revisit only if users report specific extraction failures where these knobs would help. See [[dom-query-escaping]] for full research.
