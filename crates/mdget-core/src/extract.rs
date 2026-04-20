@@ -77,10 +77,21 @@ fn clean_line(line: &str, out: &mut String) {
             && let Some(&(_, next)) = chars.peek()
         {
             match next {
-                '(' | ')' => {
-                    // Parentheses never need escaping in CommonMark prose — drop the backslash.
+                // These characters never need escaping in CommonMark prose.
+                '(' | ')' | '{' | '}' | '"' => {
                     out.push(next);
                     chars.next();
+                    continue;
+                }
+                '!' => {
+                    // `!` only matters in image syntax `![`, so preserve the
+                    // escape when followed by `[`, otherwise drop it.
+                    chars.next();
+                    let followed_by_bracket = chars.peek().is_some_and(|&(_, after)| after == '[');
+                    if followed_by_bracket {
+                        out.push('\\');
+                    }
+                    out.push('!');
                     continue;
                 }
                 '.' => {
@@ -88,11 +99,9 @@ fn clean_line(line: &str, out: &mut String) {
                     // at the very start of the line (e.g. `1\.` or `12\.`).
                     // `ordered_list_prefix_len` is the byte offset of the backslash in that case.
                     if ordered_list_prefix_len > 0 && byte_offset == ordered_list_prefix_len {
-                        // Preserve both the backslash and the dot.
                         out.push('\\');
                         out.push('.');
                     } else {
-                        // All other `\.` sequences are unnecessary — drop the backslash.
                         out.push('.');
                     }
                     chars.next();
@@ -223,5 +232,30 @@ mod tests {
     #[test]
     fn test_no_trailing_newline_preserved() {
         assert_eq!(clean_markdown_escapes("Hello\\."), "Hello.");
+    }
+
+    #[test]
+    fn test_clean_exclamation_mark() {
+        // Standalone `\!` should be unescaped
+        assert_eq!(clean_markdown_escapes("Hello\\!"), "Hello!");
+        assert_eq!(clean_markdown_escapes("wow\\! amazing\\!"), "wow! amazing!");
+    }
+
+    #[test]
+    fn test_exclamation_before_bracket_preserved() {
+        // `\![` is image syntax — keep the escape
+        assert_eq!(
+            clean_markdown_escapes("\\![alt](img.png)"),
+            "\\![alt](img.png)"
+        );
+    }
+
+    #[test]
+    fn test_clean_braces_and_quotes() {
+        assert_eq!(clean_markdown_escapes("\\{foo\\}"), "{foo}");
+        assert_eq!(
+            clean_markdown_escapes("said \\\"hello\\\""),
+            "said \"hello\""
+        );
     }
 }

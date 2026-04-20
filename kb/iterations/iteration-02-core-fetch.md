@@ -2,8 +2,13 @@
 title: "Core fetch: URL → Markdown CLI"
 type: iteration
 date: 2026-04-17
-tags: [iteration, core, mvp, claude-code, ai-agents]
-status: in-progress
+tags:
+  - iteration
+  - core
+  - mvp
+  - claude-code
+  - ai-agents
+status: completed
 branch: iter-2/core-fetch
 ---
 
