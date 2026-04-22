@@ -28,6 +28,15 @@ mdget https://example.com -t 60 -A "MyBot/1.0"
 
 # Pipe to an LLM
 mdget https://example.com/article | llm "summarize this"
+
+# Triage URLs: print only metadata (title, word count, excerpt)
+mdget -m url1 url2 url3
+
+# LLM-optimized output: metadata + no images
+mdget --include-metadata --no-images https://example.com/article
+
+# Truncate long pages
+mdget --max-length 5000 https://example.com/article
 ```
 
 ## CLI Reference
@@ -37,6 +46,10 @@ mdget <URL>                        # fetch -> extract -> markdown -> stdout
 mdget <URL> -o output.md           # write to explicit file
 mdget <URL> -O                     # auto-generate filename
 mdget <URL> --raw                  # skip readability, convert full HTML
+mdget <URL> --include-metadata     # prepend YAML frontmatter
+mdget <URL> -m                     # metadata only, skip body
+mdget <URL> --no-images            # strip image references
+mdget <URL> --max-length 5000      # truncate to N characters
 mdget <URL> -t 30                  # timeout in seconds (default: 30)
 mdget -V                           # print version
 ```
@@ -48,6 +61,10 @@ mdget -V                           # print version
 | `--output` | `-o` | Write output to named file |
 | `--auto-filename` | `-O` | Auto-generate filename from page title or URL |
 | `--raw` | `-r` | Skip readability extraction, convert full HTML |
+| `--include-metadata` | | Prepend YAML frontmatter with title, URL, date, word count |
+| `--metadata-only` | `-m` | Print only YAML frontmatter, skip body |
+| `--no-images` | | Strip image references from markdown output |
+| `--max-length` | | Truncate output to N characters |
 | `--timeout` | `-t` | HTTP timeout in seconds (default: 30) |
 | `--user-agent` | `-A` | Override User-Agent header |
 | `--version` | `-V` | Print version info |
