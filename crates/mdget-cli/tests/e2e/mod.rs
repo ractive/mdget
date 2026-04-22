@@ -516,7 +516,7 @@ fn cli_file_uri() {
     let file_path = dir.path().join("page.html");
     std::fs::write(&file_path, TEST_HTML).unwrap();
 
-    let file_uri = format!("file://{}", file_path.to_str().unwrap());
+    let file_uri = url::Url::from_file_path(&file_path).unwrap().to_string();
 
     mdget()
         .args(["--raw", &file_uri])

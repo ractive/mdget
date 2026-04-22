@@ -51,9 +51,9 @@ struct Cli {
     #[arg(short = 'i', long = "input-file", value_name = "FILE")]
     input_file: Option<String>,
 
-    /// Number of parallel fetch threads
-    #[arg(short = 'j', long = "jobs", value_name = "N")]
-    jobs: Option<usize>,
+    /// Number of parallel fetch threads (minimum 1)
+    #[arg(short = 'j', long = "jobs", value_name = "N", value_parser = clap::value_parser!(u64).range(1..))]
+    jobs: Option<u64>,
 
     /// Write output to named file
     #[arg(short = 'o', long = "output", value_name = "FILE")]
@@ -178,8 +178,14 @@ enum InputKind {
 }
 
 fn classify_input(input: &str) -> InputKind {
-    if let Some(path) = input.strip_prefix("file://") {
-        InputKind::LocalFile(std::path::PathBuf::from(path))
+    if input.starts_with("file://") {
+        match url::Url::parse(input) {
+            Ok(url) => match url.to_file_path() {
+                Ok(path) => InputKind::LocalFile(path),
+                Err(()) => InputKind::Url(input.to_string()),
+            },
+            Err(_) => InputKind::Url(input.to_string()),
+        }
     } else if std::path::Path::new(input).exists() {
         InputKind::LocalFile(std::path::PathBuf::from(input))
     } else {
@@ -262,7 +268,8 @@ fn process_single(input: &str, cli: &Cli) -> anyhow::Result<(String, Option<Stri
 
 fn run_batch(inputs: &[String], cli: &Cli) -> anyhow::Result<()> {
     let multi = inputs.len() > 1;
-    let jobs = cli.jobs.unwrap_or(if multi { 4 } else { 1 }).max(1);
+    let jobs = usize::try_from(cli.jobs.unwrap_or(if multi { 4 } else { 1 }))
+        .unwrap_or(4);
 
     // Process all inputs, collecting results in input order.
     #[allow(clippy::type_complexity)]
@@ -297,10 +304,16 @@ fn run_batch(inputs: &[String], cli: &Cli) -> anyhow::Result<()> {
                     })
                     .collect();
 
-                handles
-                    .into_iter()
-                    .flat_map(|h| h.join().unwrap_or_default())
-                    .collect()
+                let mut results = Vec::with_capacity(inputs.len());
+                for handle in handles {
+                    match handle.join() {
+                        Ok(chunk) => results.extend(chunk),
+                        Err(_) => {
+                            eprintln!("Error: a processing thread panicked unexpectedly");
+                        }
+                    }
+                }
+                results
             })
         };
 

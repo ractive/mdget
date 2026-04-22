@@ -9,7 +9,7 @@ branch: iter-3/batch-and-local
 
 ## Goal
 
-Support multiple URLs in a single invocation, reading URLs from stdin, and converting local HTML files. Add parallel fetching using OS threads (no async runtime).
+Support multiple URLs in a single invocation, reading URLs from a file, and converting local HTML files. Add parallel fetching using OS threads (no async runtime).
 
 ## CLI Interface
 

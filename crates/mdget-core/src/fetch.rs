@@ -104,9 +104,10 @@ pub fn read_local(path: &std::path::Path) -> anyhow::Result<FetchResult> {
 }
 
 fn guess_content_type(path: &std::path::Path) -> &'static str {
-    match path.extension().and_then(|e| e.to_str()) {
-        Some("txt") => "text/plain",
-        Some("json") => "application/json",
+    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+    match ext.to_ascii_lowercase().as_str() {
+        "txt" => "text/plain",
+        "json" => "application/json",
         // Default to text/html — covers .html, .htm, .xhtml, and extensionless files
         // (most local files will be saved web pages).
         _ => "text/html",
