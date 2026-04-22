@@ -10,6 +10,7 @@ pub struct ExtractOptions {
 }
 
 /// Metadata extracted from a page via readability.
+#[derive(Default)]
 pub struct Metadata {
     pub title: Option<String>,
     pub byline: Option<String>,
@@ -81,7 +82,7 @@ pub fn format_metadata_frontmatter(
 
     let mut out = String::from("---\n");
     let _ = writeln!(out, "title: \"{}\"", yaml_escape_string(title));
-    let _ = writeln!(out, "source: \"{source_url}\"");
+    let _ = writeln!(out, "source: \"{}\"", yaml_escape_string(source_url));
     let _ = writeln!(out, "fetched: {now}");
     let _ = writeln!(out, "word_count: {word_count}");
 

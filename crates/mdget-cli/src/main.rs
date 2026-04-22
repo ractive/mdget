@@ -270,29 +270,11 @@ fn process_single(input: &str, cli: &Cli) -> anyhow::Result<(String, Option<Stri
             )?;
             (r.markdown, r.title, r.metadata)
         }
-        "text/plain" => (
-            fetch_result.body,
-            None,
-            mdget_core::Metadata {
-                title: None,
-                byline: None,
-                excerpt: None,
-                published: None,
-                language: None,
-                site_name: None,
-            },
-        ),
+        "text/plain" => (fetch_result.body, None, mdget_core::Metadata::default()),
         "application/json" => (
             format!("```json\n{}\n```", fetch_result.body),
             None,
-            mdget_core::Metadata {
-                title: None,
-                byline: None,
-                excerpt: None,
-                published: None,
-                language: None,
-                site_name: None,
-            },
+            mdget_core::Metadata::default(),
         ),
         t if is_binary_mime(t) => {
             anyhow::bail!("binary content ({mime_type}); mdget only processes HTML pages");
