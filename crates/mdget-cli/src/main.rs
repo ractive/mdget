@@ -10,18 +10,23 @@ const MANAGED_SECTION_CONTENT: &str = "<!-- mdget:start -->\nUse `mdget <URL>` (
 #[command(
     name = "mdget",
     version,
-    about = "Fetch a web page and convert it to clean Markdown",
-    long_about = "Fetch a web page and convert it to clean Markdown.
+    about = "Fetch web pages and convert them to clean Markdown",
+    long_about = "Fetch web pages and convert them to clean Markdown.
 
-mdget fetches a URL, extracts the main content using a readability algorithm
-(similar to browser reader mode), and converts it to Markdown. Progress
-messages go to stderr; content goes to stdout, making it pipe-friendly.
+mdget fetches URLs or reads local HTML files, extracts the main content using
+a readability algorithm (similar to browser reader mode), and converts it to
+Markdown. Progress messages go to stderr; content goes to stdout, making it
+pipe-friendly.
 
 EXAMPLES:
     mdget https://example.com/article              # print markdown to stdout
     mdget https://example.com/article -o page.md   # save to file
     mdget https://example.com/article -O            # auto-name file from title
     mdget https://example.com/article --raw         # full HTML, no extraction
+    mdget url1 url2 url3                            # fetch multiple URLs
+    mdget url1 url2 -j 8                            # parallel fetching (8 threads)
+    mdget ./page.html                               # convert local HTML file
+    mdget -i urls.txt                               # read URLs from file
     mdget https://example.com/article | llm \"summarize this\"
 
 EXIT CODES:
@@ -38,9 +43,17 @@ struct Cli {
     #[command(subcommand)]
     command: Option<Command>,
 
-    /// URL to fetch
-    #[arg(value_name = "URL")]
-    url: Option<String>,
+    /// URLs or local file paths to process
+    #[arg(value_name = "INPUT")]
+    inputs: Vec<String>,
+
+    /// Read inputs from a file (one per line, skip blank lines and #comments)
+    #[arg(short = 'i', long = "input-file", value_name = "FILE")]
+    input_file: Option<String>,
+
+    /// Number of parallel fetch threads (minimum 1)
+    #[arg(short = 'j', long = "jobs", value_name = "N", value_parser = clap::value_parser!(u64).range(1..))]
+    jobs: Option<u64>,
 
     /// Write output to named file
     #[arg(short = 'o', long = "output", value_name = "FILE")]
@@ -111,12 +124,21 @@ fn main() -> anyhow::Result<()> {
         }
         Some(Command::Deinit { global }) => run_deinit(*global),
         None => {
-            let url_str = cli.url.as_deref().ok_or_else(|| {
-                anyhow::anyhow!(
-                    "missing required argument: <URL>\n\nUsage: mdget <URL>\n\nFor more information, try '--help'"
-                )
-            })?;
-            run_fetch(url_str, &cli)
+            let all_inputs = collect_inputs(&cli)?;
+            if all_inputs.is_empty() {
+                anyhow::bail!(
+                    "no inputs provided\n\nUsage: mdget <INPUT>...\n\nFor more information, try '--help'"
+                );
+            }
+
+            // -o conflicts with multiple inputs
+            if all_inputs.len() > 1 && cli.output.is_some() {
+                anyhow::bail!(
+                    "cannot use -o/--output with multiple inputs; use -O for per-input auto-naming"
+                );
+            }
+
+            run_batch(&all_inputs, &cli)
         }
     }
 }
@@ -131,18 +153,68 @@ fn is_binary_mime(mime: &str) -> bool {
         )
 }
 
-fn run_fetch(url_str: &str, cli: &Cli) -> anyhow::Result<()> {
-    if !cli.quiet {
-        eprintln!("Fetching {url_str}...");
+/// Collect all inputs from positional args and input file.
+fn collect_inputs(cli: &Cli) -> anyhow::Result<Vec<String>> {
+    // clone needed: positional inputs are owned Strings in the CLI struct
+    let mut inputs: Vec<String> = cli.inputs.clone();
+
+    if let Some(ref file) = cli.input_file {
+        let content = std::fs::read_to_string(file)
+            .with_context(|| format!("failed to read input file: {file}"))?;
+        for line in content.lines() {
+            let trimmed = line.trim();
+            if !trimmed.is_empty() && !trimmed.starts_with('#') {
+                inputs.push(trimmed.to_string());
+            }
+        }
     }
 
-    let fetch_result = mdget_core::fetch(
-        url_str,
-        &mdget_core::FetchOptions {
-            timeout_secs: cli.timeout,
-            user_agent: cli.user_agent.clone(),
-        },
-    )?;
+    Ok(inputs)
+}
+
+enum InputKind {
+    Url(String),
+    LocalFile(std::path::PathBuf),
+}
+
+fn classify_input(input: &str) -> InputKind {
+    if input.starts_with("file://") {
+        match url::Url::parse(input) {
+            Ok(url) => match url.to_file_path() {
+                Ok(path) => InputKind::LocalFile(path),
+                Err(()) => InputKind::Url(input.to_string()),
+            },
+            Err(_) => InputKind::Url(input.to_string()),
+        }
+    } else if std::path::Path::new(input).exists() {
+        InputKind::LocalFile(std::path::PathBuf::from(input))
+    } else {
+        InputKind::Url(input.to_string())
+    }
+}
+
+/// Process a single input (URL or local file) and return (output_text, title, final_url).
+fn process_single(input: &str, cli: &Cli) -> anyhow::Result<(String, Option<String>, url::Url)> {
+    let fetch_result = match classify_input(input) {
+        InputKind::Url(ref url) => {
+            if !cli.quiet {
+                eprintln!("Fetching {url}...");
+            }
+            mdget_core::fetch(
+                url,
+                &mdget_core::FetchOptions {
+                    timeout_secs: cli.timeout,
+                    user_agent: cli.user_agent.clone(),
+                },
+            )?
+        }
+        InputKind::LocalFile(ref path) => {
+            if !cli.quiet {
+                eprintln!("Reading {}...", path.display());
+            }
+            mdget_core::read_local(path)?
+        }
+    };
 
     let content_type = fetch_result.content_type.as_deref().unwrap_or("");
     let mime_type = content_type
@@ -168,9 +240,7 @@ fn run_fetch(url_str: &str, cli: &Cli) -> anyhow::Result<()> {
         "text/plain" => (fetch_result.body, None),
         "application/json" => (format!("```json\n{}\n```", fetch_result.body), None),
         t if is_binary_mime(t) => {
-            anyhow::bail!(
-                "URL returned binary content ({mime_type}). mdget only processes HTML pages."
-            );
+            anyhow::bail!("binary content ({mime_type}); mdget only processes HTML pages");
         }
         _ => {
             eprintln!("Warning: unexpected Content-Type '{mime_type}', attempting HTML extraction");
@@ -186,28 +256,103 @@ fn run_fetch(url_str: &str, cli: &Cli) -> anyhow::Result<()> {
         }
     };
 
-    // Ensure output always ends with a trailing newline for consistency.
+    // Ensure trailing newline
     let final_output = if output_text.ends_with('\n') {
         output_text
     } else {
         format!("{output_text}\n")
     };
 
-    if let Some(ref path) = cli.output {
-        std::fs::write(path, &final_output)
-            .with_context(|| format!("failed to write to {path}"))?;
-        if !cli.quiet {
-            eprintln!("Saved to {path}");
+    Ok((final_output, title, fetch_result.final_url))
+}
+
+fn run_batch(inputs: &[String], cli: &Cli) -> anyhow::Result<()> {
+    let multi = inputs.len() > 1;
+    let jobs = usize::try_from(cli.jobs.unwrap_or(if multi { 4 } else { 1 }))
+        .unwrap_or(4);
+
+    // Process all inputs, collecting results in input order.
+    #[allow(clippy::type_complexity)]
+    let results: Vec<(&str, Result<(String, Option<String>, url::Url), String>)> =
+        if jobs <= 1 || inputs.len() <= 1 {
+            // Sequential processing
+            inputs
+                .iter()
+                .map(|input| {
+                    let result = process_single(input, cli).map_err(|e| format!("{e:#}"));
+                    (input.as_str(), result)
+                })
+                .collect()
+        } else {
+            // Parallel processing with std::thread::scope
+            let chunk_size = inputs.len().div_ceil(jobs);
+
+            std::thread::scope(|s| {
+                let handles: Vec<_> = inputs
+                    .chunks(chunk_size)
+                    .map(|chunk| {
+                        s.spawn(|| {
+                            chunk
+                                .iter()
+                                .map(|input| {
+                                    let result =
+                                        process_single(input, cli).map_err(|e| format!("{e:#}"));
+                                    (input.as_str(), result)
+                                })
+                                .collect::<Vec<_>>()
+                        })
+                    })
+                    .collect();
+
+                let mut results = Vec::with_capacity(inputs.len());
+                for handle in handles {
+                    match handle.join() {
+                        Ok(chunk) => results.extend(chunk),
+                        Err(_) => {
+                            eprintln!("Error: a processing thread panicked unexpectedly");
+                        }
+                    }
+                }
+                results
+            })
+        };
+
+    // Output phase: emit results in input order
+    let mut had_error = false;
+
+    for (i, (input, result)) in results.iter().enumerate() {
+        match result {
+            Ok((content, title, final_url)) => {
+                if multi && i > 0 {
+                    println!("\n---\n");
+                }
+                if let Some(ref path) = cli.output {
+                    // Single input only (validated above)
+                    std::fs::write(path, content)
+                        .with_context(|| format!("failed to write to {path}"))?;
+                    if !cli.quiet {
+                        eprintln!("Saved to {path}");
+                    }
+                } else if cli.auto_filename {
+                    let filename = mdget_core::generate_filename(title.as_deref(), final_url);
+                    std::fs::write(&filename, content)
+                        .with_context(|| format!("failed to write to {filename}"))?;
+                    if !cli.quiet {
+                        eprintln!("Saved to {filename}");
+                    }
+                } else {
+                    print!("{content}");
+                }
+            }
+            Err(e) => {
+                had_error = true;
+                eprintln!("Error: {input}: {e}");
+            }
         }
-    } else if cli.auto_filename {
-        let filename = mdget_core::generate_filename(title.as_deref(), &fetch_result.final_url);
-        std::fs::write(&filename, &final_output)
-            .with_context(|| format!("failed to write to {filename}"))?;
-        if !cli.quiet {
-            eprintln!("Saved to {filename}");
-        }
-    } else {
-        print!("{final_output}");
+    }
+
+    if had_error {
+        anyhow::bail!("one or more inputs failed");
     }
 
     Ok(())

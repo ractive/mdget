@@ -70,3 +70,46 @@ pub fn fetch(url: &str, options: &FetchOptions) -> anyhow::Result<FetchResult> {
         content_type,
     })
 }
+
+/// Read a local HTML file and return a `FetchResult` suitable for the extraction pipeline.
+///
+/// The `content_type` is guessed from the file extension:
+/// - `.html` / `.htm` / `.xhtml` → `text/html`
+/// - `.txt` → `text/plain`
+/// - `.json` → `application/json`
+/// - anything else → `text/html` (default, since most local files will be saved web pages)
+pub fn read_local(path: &std::path::Path) -> anyhow::Result<FetchResult> {
+    let body = std::fs::read_to_string(path)
+        .with_context(|| format!("failed to read local file: {}", path.display()))?;
+
+    let abs_path = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .context("failed to determine current directory")?
+            .join(path)
+    };
+
+    let final_url = Url::from_file_path(&abs_path).map_err(|()| {
+        anyhow::anyhow!("failed to convert path to file URL: {}", abs_path.display())
+    })?;
+
+    let content_type = guess_content_type(path);
+
+    Ok(FetchResult {
+        body,
+        final_url,
+        content_type: Some(content_type.to_string()),
+    })
+}
+
+fn guess_content_type(path: &std::path::Path) -> &'static str {
+    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+    match ext.to_ascii_lowercase().as_str() {
+        "txt" => "text/plain",
+        "json" => "application/json",
+        // Default to text/html — covers .html, .htm, .xhtml, and extensionless files
+        // (most local files will be saved web pages).
+        _ => "text/html",
+    }
+}
