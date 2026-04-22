@@ -2,8 +2,12 @@
 title: "Dogfood fixes: escaping, content-type, quiet mode"
 type: iteration
 date: 2026-04-18
-tags: [iteration, bugfix, quality, dogfood]
-status: in-progress
+tags:
+  - iteration
+  - bugfix
+  - quality
+  - dogfood
+status: completed
 branch: iter-2a/dogfood-fixes
 ---
 

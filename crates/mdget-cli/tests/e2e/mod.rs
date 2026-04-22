@@ -285,3 +285,81 @@ fn cli_output_ends_with_newline() {
         "stdout must end with a newline"
     );
 }
+
+#[test]
+fn cli_strips_wikipedia_edit_links() {
+    let html = br#"<!DOCTYPE html>
+<html>
+<head><title>Wiki Test</title></head>
+<body>
+  <article>
+    <h2>History</h2>
+    <a href="https://en.wikipedia.org/w/index.php?title=Foo&amp;action=edit&amp;section=1">[edit]</a>
+    <p>This is the history section with enough text for readability to extract it.
+    We need multiple sentences to ensure the content passes the extraction threshold.</p>
+    <h2>Geography</h2>
+    <a href="https://en.wikipedia.org/w/index.php?title=Foo&amp;action=edit&amp;section=2">[edit]</a>
+    <p>This is the geography section with enough text for readability to extract it.
+    Again we add extra content to make sure readability is happy with the length.</p>
+  </article>
+</body>
+</html>"#;
+    let url = spawn_http_server(200, "text/html; charset=utf-8", html);
+
+    let output = Command::cargo_bin("mdget")
+        .unwrap()
+        .args(["-t", "5", "--raw", &url])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        !stdout.contains("[edit]"),
+        "edit links should be stripped, got: {stdout}"
+    );
+    assert!(
+        stdout.contains("History") || stdout.contains("Geography"),
+        "headings should remain"
+    );
+}
+
+#[test]
+fn cli_cleans_degenerate_table() {
+    // Build HTML with a mostly-empty two-column table (>50% empty cells).
+    let html = br"<!DOCTYPE html>
+<html>
+<head><title>Table Test</title></head>
+<body>
+  <article>
+    <p>Content before table to ensure readability extraction works properly.
+    We need enough text here to pass the content threshold.</p>
+    <table>
+      <tr><th>Property</th><th>Value</th></tr>
+      <tr><td>Name</td><td>Alice</td></tr>
+      <tr><td></td><td></td></tr>
+      <tr><td></td><td></td></tr>
+      <tr><td></td><td></td></tr>
+      <tr><td>Country</td><td>USA</td></tr>
+    </table>
+    <p>Content after table to ensure there is enough text for extraction.
+    Additional sentences help the readability algorithm identify this as content.</p>
+  </article>
+</body>
+</html>";
+    let url = spawn_http_server(200, "text/html; charset=utf-8", html);
+
+    let output = Command::cargo_bin("mdget")
+        .unwrap()
+        .args(["-t", "5", "--raw", &url])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    // The degenerate table should be converted to key-value format.
+    assert!(
+        stdout.contains("**Name:** Alice") || stdout.contains("**Country:** USA"),
+        "degenerate table should be converted to key-value format, got: {stdout}"
+    );
+}
