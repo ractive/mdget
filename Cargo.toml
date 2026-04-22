@@ -21,6 +21,7 @@ dom_smoothie = "0.17"
 predicates = "3"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls", "gzip", "brotli", "deflate", "charset"] }
 serde = { version = "1", features = ["derive"] }
+mockito = "1"
 tempfile = "3"
 url = "2"
 
