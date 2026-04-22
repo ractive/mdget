@@ -1,9 +1,12 @@
 ---
-title: "Batch fetching & local HTML files"
+title: Batch fetching & local HTML files
 type: iteration
 date: 2026-04-17
-tags: [iteration, batch, local-files]
-status: in-progress
+tags:
+  - iteration
+  - batch
+  - local-files
+status: completed
 branch: iter-3/batch-and-local
 ---
 
