@@ -3,7 +3,7 @@ title: "Post-process output cleanup: table quality & wiki artifacts"
 type: iteration
 date: 2026-04-20
 tags: [iteration, quality, post-processing, dogfood]
-status: planned
+status: in-progress
 branch: iter-2b/output-cleanup
 ---
 
@@ -40,13 +40,13 @@ Readability extraction preserves `[edit]` links next to headings on Wikipedia. T
 
 ## Tasks
 
-- [ ] Implement table quality heuristic (empty-cell ratio, column consistency)
-- [ ] Convert degenerate tables to compact key-value or plain text format
-- [ ] Add unit tests for table post-processing with good and bad table examples
-- [ ] Implement `[edit]` link stripping for Wikipedia-style section edit links
-- [ ] Add unit tests for edit link stripping
-- [ ] e2e test: fetch a Wikipedia article and verify no `[edit]` links in output
-- [ ] Run quality gates: `cargo fmt`, `cargo clippy`, `cargo test`
+- [x] Implement table quality heuristic (empty-cell ratio, column consistency)
+- [x] Convert degenerate tables to compact key-value or plain text format
+- [x] Add unit tests for table post-processing with good and bad table examples
+- [x] Implement `[edit]` link stripping for Wikipedia-style section edit links
+- [x] Add unit tests for edit link stripping
+- [x] e2e test: fetch HTML with `[edit]` links and degenerate table, verify cleanup
+- [x] Run quality gates: `cargo fmt`, `cargo clippy`, `cargo test`
 
 ## Design Decisions
 
