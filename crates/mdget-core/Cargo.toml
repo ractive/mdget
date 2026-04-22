@@ -12,6 +12,7 @@ workspace = true
 
 [dependencies]
 anyhow = { workspace = true }
+chrono = { workspace = true }
 dom_smoothie = { workspace = true }
 reqwest = { workspace = true }
 url = { workspace = true }

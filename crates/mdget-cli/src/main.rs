@@ -27,6 +27,9 @@ EXAMPLES:
     mdget url1 url2 -j 8                            # parallel fetching (8 threads)
     mdget ./page.html                               # convert local HTML file
     mdget -i urls.txt                               # read URLs from file
+    mdget -m url1 url2 url3                         # triage: metadata only
+    mdget --include-metadata --no-images <URL>      # LLM-optimized output
+    mdget --max-length 5000 <URL>                   # truncate long pages
     mdget https://example.com/article | llm \"summarize this\"
 
 EXIT CODES:
@@ -74,6 +77,36 @@ struct Cli {
         long_help = "Skip readability extraction, convert full HTML.\n\nBy default, mdget uses a readability algorithm to extract the main content\n(article body) from the page. With --raw, the entire HTML document is\nconverted to Markdown without filtering."
     )]
     raw: bool,
+
+    /// Prepend YAML frontmatter with title, URL, date, word count, and other metadata
+    #[arg(
+        long = "include-metadata",
+        long_help = "Prepend YAML frontmatter with page metadata.\n\nAlways includes: title, source URL, fetch timestamp, word count.\nOptionally includes (when available): byline, excerpt, published date,\nlanguage, site name."
+    )]
+    include_metadata: bool,
+
+    /// Print only YAML frontmatter metadata, skip body
+    #[arg(
+        short = 'm',
+        long = "metadata-only",
+        long_help = "Print only YAML frontmatter metadata, skip the article body.\n\nUseful for triaging URLs: inspect title, word count, and excerpt before\ndeciding which pages to fetch in full. Still requires a full fetch\n(readability needs the DOM), but saves output tokens."
+    )]
+    metadata_only: bool,
+
+    /// Strip image references from markdown output
+    #[arg(
+        long = "no-images",
+        long_help = "Strip ![alt](url) image references from markdown output.\n\nLLMs cannot see images, so image references waste tokens. This flag\nremoves all markdown image syntax cleanly."
+    )]
+    no_images: bool,
+
+    /// Truncate output to N characters
+    #[arg(
+        long = "max-length",
+        value_name = "N",
+        long_help = "Truncate output to approximately N characters.\n\nBreaks at the nearest paragraph, sentence, or word boundary before N.\nAppends '[Truncated]' when truncation occurs. Character-based (not tokens)\nfor predictability across models."
+    )]
+    max_length: Option<usize>,
 
     /// Suppress progress messages on stderr (errors still shown)
     #[arg(short = 'q', long = "quiet")]
@@ -225,7 +258,7 @@ fn process_single(input: &str, cli: &Cli) -> anyhow::Result<(String, Option<Stri
         .to_ascii_lowercase();
     let mime_type = mime_type.as_str();
 
-    let (output_text, title) = match mime_type {
+    let (output_text, title, metadata) = match mime_type {
         "text/html" | "application/xhtml+xml" | "" => {
             if !cli.quiet {
                 eprintln!("Extracting content...");
@@ -235,10 +268,32 @@ fn process_single(input: &str, cli: &Cli) -> anyhow::Result<(String, Option<Stri
                 &fetch_result.final_url,
                 &mdget_core::ExtractOptions { raw: cli.raw },
             )?;
-            (r.markdown, r.title)
+            (r.markdown, r.title, r.metadata)
         }
-        "text/plain" => (fetch_result.body, None),
-        "application/json" => (format!("```json\n{}\n```", fetch_result.body), None),
+        "text/plain" => (
+            fetch_result.body,
+            None,
+            mdget_core::Metadata {
+                title: None,
+                byline: None,
+                excerpt: None,
+                published: None,
+                language: None,
+                site_name: None,
+            },
+        ),
+        "application/json" => (
+            format!("```json\n{}\n```", fetch_result.body),
+            None,
+            mdget_core::Metadata {
+                title: None,
+                byline: None,
+                excerpt: None,
+                published: None,
+                language: None,
+                site_name: None,
+            },
+        ),
         t if is_binary_mime(t) => {
             anyhow::bail!("binary content ({mime_type}); mdget only processes HTML pages");
         }
@@ -252,15 +307,48 @@ fn process_single(input: &str, cli: &Cli) -> anyhow::Result<(String, Option<Stri
                 &fetch_result.final_url,
                 &mdget_core::ExtractOptions { raw: cli.raw },
             )?;
-            (r.markdown, r.title)
+            (r.markdown, r.title, r.metadata)
         }
     };
 
-    // Ensure trailing newline
-    let final_output = if output_text.ends_with('\n') {
-        output_text
+    // Post-processing pipeline:
+    // 1. Strip images (if requested)
+    let output_text = if cli.no_images {
+        mdget_core::strip_images(&output_text)
     } else {
-        format!("{output_text}\n")
+        output_text
+    };
+
+    // 2. Compute word count (after image stripping, before truncation)
+    let wc = mdget_core::word_count(&output_text);
+
+    // 3. Truncate (if requested)
+    let output_text = if let Some(max) = cli.max_length {
+        mdget_core::truncate_output(&output_text, max)
+    } else {
+        output_text
+    };
+
+    // 4. Build final output with optional metadata
+    let final_output = if cli.metadata_only {
+        mdget_core::format_metadata_frontmatter(&metadata, fetch_result.final_url.as_str(), wc)
+    } else if cli.include_metadata {
+        let frontmatter =
+            mdget_core::format_metadata_frontmatter(&metadata, fetch_result.final_url.as_str(), wc);
+        // Ensure trailing newline on body before prepending
+        let body = if output_text.ends_with('\n') {
+            output_text
+        } else {
+            format!("{output_text}\n")
+        };
+        format!("{frontmatter}\n{body}")
+    } else {
+        // Ensure trailing newline
+        if output_text.ends_with('\n') {
+            output_text
+        } else {
+            format!("{output_text}\n")
+        }
     };
 
     Ok((final_output, title, fetch_result.final_url))
@@ -268,8 +356,7 @@ fn process_single(input: &str, cli: &Cli) -> anyhow::Result<(String, Option<Stri
 
 fn run_batch(inputs: &[String], cli: &Cli) -> anyhow::Result<()> {
     let multi = inputs.len() > 1;
-    let jobs = usize::try_from(cli.jobs.unwrap_or(if multi { 4 } else { 1 }))
-        .unwrap_or(4);
+    let jobs = usize::try_from(cli.jobs.unwrap_or(if multi { 4 } else { 1 })).unwrap_or(4);
 
     // Process all inputs, collecting results in input order.
     #[allow(clippy::type_complexity)]

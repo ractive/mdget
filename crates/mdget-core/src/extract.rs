@@ -1,3 +1,5 @@
+use std::fmt::Write as _;
+
 use anyhow::Context;
 use dom_smoothie::{Config, ParsePolicy, Readability, TextMode};
 use url::Url;
@@ -7,9 +9,20 @@ pub struct ExtractOptions {
     pub raw: bool,
 }
 
+/// Metadata extracted from a page via readability.
+pub struct Metadata {
+    pub title: Option<String>,
+    pub byline: Option<String>,
+    pub excerpt: Option<String>,
+    pub published: Option<String>,
+    pub language: Option<String>,
+    pub site_name: Option<String>,
+}
+
 pub struct ExtractResult {
     pub markdown: String,
     pub title: Option<String>,
+    pub metadata: Metadata,
 }
 
 pub fn extract(html: &str, url: &Url, options: &ExtractOptions) -> anyhow::Result<ExtractResult> {
@@ -36,8 +49,215 @@ pub fn extract(html: &str, url: &Url, options: &ExtractOptions) -> anyhow::Resul
     let markdown = clean_markdown_escapes(article.text_content.as_ref());
     let markdown = strip_edit_links(&markdown);
     let markdown = clean_degenerate_tables(&markdown);
-    let title = Some(article.title).filter(|t| !t.is_empty());
-    Ok(ExtractResult { markdown, title })
+    let title = Some(article.title.clone()).filter(|t| !t.is_empty());
+
+    let metadata = Metadata {
+        title: Some(article.title).filter(|t| !t.is_empty()),
+        byline: article.byline.filter(|s| !s.is_empty()),
+        excerpt: article.excerpt.filter(|s| !s.is_empty()),
+        published: article.published_time.filter(|s| !s.is_empty()),
+        language: article.lang.filter(|s| !s.is_empty()),
+        site_name: article.site_name.filter(|s| !s.is_empty()),
+    };
+
+    Ok(ExtractResult {
+        markdown,
+        title,
+        metadata,
+    })
+}
+
+/// Generate YAML frontmatter from metadata, source URL, and word count.
+///
+/// Always includes: title, source, fetched, word_count.
+/// Optionally includes: byline, excerpt, published, language, site_name (when available).
+pub fn format_metadata_frontmatter(
+    metadata: &Metadata,
+    source_url: &str,
+    word_count: usize,
+) -> String {
+    let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ");
+    let title = metadata.title.as_deref().unwrap_or("Untitled");
+
+    let mut out = String::from("---\n");
+    let _ = writeln!(out, "title: \"{}\"", yaml_escape_string(title));
+    let _ = writeln!(out, "source: \"{source_url}\"");
+    let _ = writeln!(out, "fetched: {now}");
+    let _ = writeln!(out, "word_count: {word_count}");
+
+    if let Some(ref byline) = metadata.byline {
+        let _ = writeln!(out, "byline: \"{}\"", yaml_escape_string(byline));
+    }
+    if let Some(ref excerpt) = metadata.excerpt {
+        let _ = writeln!(out, "excerpt: \"{}\"", yaml_escape_string(excerpt));
+    }
+    if let Some(ref published) = metadata.published {
+        let _ = writeln!(out, "published: {published}");
+    }
+    if let Some(ref lang) = metadata.language {
+        let _ = writeln!(out, "language: {lang}");
+    }
+    if let Some(ref site_name) = metadata.site_name {
+        let _ = writeln!(out, "site_name: \"{}\"", yaml_escape_string(site_name));
+    }
+
+    out.push_str("---\n");
+    out
+}
+
+/// Escape double quotes and backslashes for YAML double-quoted strings.
+fn yaml_escape_string(s: &str) -> String {
+    s.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+/// Strip markdown image references (`![alt](url)`) from text.
+pub fn strip_images(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    let bytes = input.as_bytes();
+    let len = bytes.len();
+    let mut i = 0;
+
+    while i < len {
+        // Match `![` at current position
+        if i + 1 < len
+            && bytes[i] == b'!'
+            && bytes[i + 1] == b'['
+            && let Some(end) = match_image_ref(input, i)
+        {
+            i = end;
+            continue;
+        }
+        // Match `\![` (escaped image from dom_smoothie)
+        if i + 2 < len
+            && bytes[i] == b'\\'
+            && bytes[i + 1] == b'!'
+            && bytes[i + 2] == b'['
+            && let Some(end) = match_image_ref(input, i + 1)
+        {
+            i = end;
+            continue;
+        }
+        let ch = input[i..].chars().next().unwrap_or('\0');
+        out.push(ch);
+        i += ch.len_utf8();
+    }
+
+    // Clean up blank lines left behind by image removal
+    collapse_blank_lines(&out)
+}
+
+/// Match `![alt](url)` starting at `pos` (the `!`). Returns byte offset past the closing `)`.
+fn match_image_ref(s: &str, pos: usize) -> Option<usize> {
+    let rest = s.get(pos..)?;
+    let after_bang = rest.strip_prefix("![")?;
+    // Find the closing `]`
+    let bracket_end = after_bang.find(']')?;
+    let after_bracket = after_bang.get(bracket_end + 1..)?;
+    // Must be followed by `(`
+    if !after_bracket.starts_with('(') {
+        return None;
+    }
+    // Find the closing `)` — handle nested parens for URLs
+    let paren_content = &after_bracket[1..];
+    let mut depth = 1u32;
+    let mut paren_end = 0;
+    for (bi, b) in paren_content.bytes().enumerate() {
+        match b {
+            b'(' => depth += 1,
+            b')' => {
+                depth -= 1;
+                if depth == 0 {
+                    paren_end = bi;
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    if depth != 0 {
+        return None;
+    }
+    // Total consumed: pos + "![".len() + bracket_end + "](".len() + paren_end + ")".len()
+    Some(pos + 2 + bracket_end + 2 + paren_end + 1)
+}
+
+/// Collapse runs of 3+ consecutive newlines down to 2 (one blank line).
+fn collapse_blank_lines(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    let mut consecutive_newlines = 0u32;
+
+    for ch in input.chars() {
+        if ch == '\n' {
+            consecutive_newlines += 1;
+            if consecutive_newlines <= 2 {
+                out.push(ch);
+            }
+        } else {
+            consecutive_newlines = 0;
+            out.push(ch);
+        }
+    }
+
+    out
+}
+
+/// Truncate text to at most `max_chars` characters, breaking at a paragraph or sentence
+/// boundary if possible. Appends `\n\n[Truncated]` when truncation occurs.
+pub fn truncate_output(input: &str, max_chars: usize) -> String {
+    if input.len() <= max_chars {
+        return input.to_string();
+    }
+
+    let truncation_suffix = "\n\n[Truncated]";
+    // Reserve space for the suffix
+    let budget = max_chars.saturating_sub(truncation_suffix.len());
+
+    if budget == 0 {
+        return truncation_suffix.trim_start().to_string();
+    }
+
+    // Find the best break point within budget
+    let slice = &input[..find_char_boundary(input, budget)];
+
+    // Try paragraph break (double newline)
+    let break_pos = slice
+        .rfind("\n\n")
+        // Fall back to sentence boundary (. followed by space or newline)
+        .or_else(|| find_last_sentence_end(slice))
+        // Fall back to any newline
+        .or_else(|| slice.rfind('\n'))
+        // Fall back to any space
+        .or_else(|| slice.rfind(' '))
+        // Last resort: hard cut at budget
+        .unwrap_or(slice.len());
+
+    let truncated = &input[..break_pos];
+    format!("{}{truncation_suffix}", truncated.trim_end())
+}
+
+/// Find the last sentence-ending position (byte offset after `. ` or `.\n`).
+fn find_last_sentence_end(s: &str) -> Option<usize> {
+    let bytes = s.as_bytes();
+    (1..bytes.len())
+        .rev()
+        .find(|&i| bytes[i - 1] == b'.' && (bytes[i] == b' ' || bytes[i] == b'\n'))
+}
+
+/// Find the largest byte index <= `target` that is on a char boundary.
+fn find_char_boundary(s: &str, target: usize) -> usize {
+    if target >= s.len() {
+        return s.len();
+    }
+    let mut i = target;
+    while !s.is_char_boundary(i) && i > 0 {
+        i -= 1;
+    }
+    i
+}
+
+/// Count words in text (splits on whitespace).
+pub fn word_count(text: &str) -> usize {
+    text.split_whitespace().count()
 }
 
 /// Strips unnecessary backslash escapes introduced by dom_smoothie's markdown serialiser.
@@ -791,5 +1011,184 @@ mod tests {
             result, input,
             "fully-populated 2-col table should pass through"
         );
+    }
+
+    // --- strip_images unit tests ---
+
+    #[test]
+    fn test_strip_simple_image() {
+        let input = "Before ![alt text](https://example.com/img.png) after\n";
+        let result = strip_images(input);
+        assert!(!result.contains("!["), "image should be stripped");
+        assert!(result.contains("Before"), "text before should remain");
+        assert!(result.contains("after"), "text after should remain");
+    }
+
+    #[test]
+    fn test_strip_escaped_image() {
+        let input = "Text \\![alt](https://example.com/img.png) end\n";
+        let result = strip_images(input);
+        assert!(
+            !result.contains("!["),
+            "escaped image should also be stripped"
+        );
+        assert!(result.contains("Text"));
+        assert!(result.contains("end"));
+    }
+
+    #[test]
+    fn test_strip_image_no_affect_links() {
+        let input = "A [link](https://example.com) stays\n";
+        let result = strip_images(input);
+        assert_eq!(result, input, "regular links must be preserved");
+    }
+
+    #[test]
+    fn test_strip_multiple_images() {
+        let input = "![a](1.png) text ![b](2.png)\n";
+        let result = strip_images(input);
+        assert!(!result.contains("!["));
+        assert!(result.contains("text"));
+    }
+
+    #[test]
+    fn test_strip_images_collapses_blank_lines() {
+        let input = "Before\n\n![img](url.png)\n\nAfter\n";
+        let result = strip_images(input);
+        assert!(!result.contains("!["));
+        // Should not have 3+ consecutive newlines
+        assert!(!result.contains("\n\n\n"));
+    }
+
+    // --- truncate_output unit tests ---
+
+    #[test]
+    fn test_truncate_no_op_when_short() {
+        let input = "Short text.";
+        assert_eq!(truncate_output(input, 100), input);
+    }
+
+    #[test]
+    fn test_truncate_at_paragraph_boundary() {
+        let input = "First paragraph.\n\nSecond paragraph.\n\nThird paragraph.";
+        let result = truncate_output(input, 45);
+        assert!(result.contains("[Truncated]"));
+        assert!(result.contains("First paragraph."));
+    }
+
+    #[test]
+    fn test_truncate_at_sentence_boundary() {
+        let input = "First sentence. Second sentence. Third sentence is longer.";
+        let result = truncate_output(input, 50);
+        assert!(result.contains("[Truncated]"));
+        // Should break at a sentence boundary
+        assert!(result.contains("First sentence.") || result.contains("Second sentence."));
+    }
+
+    #[test]
+    fn test_truncate_appends_marker() {
+        let input = "A".repeat(200);
+        let result = truncate_output(&input, 100);
+        assert!(result.ends_with("[Truncated]"));
+        assert!(result.len() <= 100);
+    }
+
+    // --- word_count unit tests ---
+
+    #[test]
+    fn test_word_count_basic() {
+        assert_eq!(word_count("hello world foo"), 3);
+    }
+
+    #[test]
+    fn test_word_count_empty() {
+        assert_eq!(word_count(""), 0);
+    }
+
+    #[test]
+    fn test_word_count_with_newlines() {
+        assert_eq!(word_count("hello\nworld\n\nfoo"), 3);
+    }
+
+    // --- format_metadata_frontmatter unit tests ---
+
+    #[test]
+    fn test_frontmatter_required_fields() {
+        let meta = Metadata {
+            title: Some("Test Title".to_string()),
+            byline: None,
+            excerpt: None,
+            published: None,
+            language: None,
+            site_name: None,
+        };
+        let result = format_metadata_frontmatter(&meta, "https://example.com", 42);
+        assert!(result.starts_with("---\n"));
+        assert!(result.ends_with("---\n"));
+        assert!(result.contains("title: \"Test Title\""));
+        assert!(result.contains("source: \"https://example.com\""));
+        assert!(result.contains("fetched:"));
+        assert!(result.contains("word_count: 42"));
+        // Optional fields should not appear
+        assert!(!result.contains("byline:"));
+        assert!(!result.contains("excerpt:"));
+    }
+
+    #[test]
+    fn test_frontmatter_optional_fields() {
+        let meta = Metadata {
+            title: Some("Article".to_string()),
+            byline: Some("John Doe".to_string()),
+            excerpt: Some("A short desc".to_string()),
+            published: Some("2026-04-17".to_string()),
+            language: Some("en".to_string()),
+            site_name: Some("Example News".to_string()),
+        };
+        let result = format_metadata_frontmatter(&meta, "https://example.com/a", 100);
+        assert!(result.contains("byline: \"John Doe\""));
+        assert!(result.contains("excerpt: \"A short desc\""));
+        assert!(result.contains("published: 2026-04-17"));
+        assert!(result.contains("language: en"));
+        assert!(result.contains("site_name: \"Example News\""));
+    }
+
+    #[test]
+    fn test_frontmatter_escapes_quotes() {
+        let meta = Metadata {
+            title: Some("Title with \"quotes\"".to_string()),
+            byline: None,
+            excerpt: None,
+            published: None,
+            language: None,
+            site_name: None,
+        };
+        let result = format_metadata_frontmatter(&meta, "https://example.com", 10);
+        assert!(result.contains(r#"title: "Title with \"quotes\"""#));
+    }
+
+    #[test]
+    fn test_frontmatter_untitled_fallback() {
+        let meta = Metadata {
+            title: None,
+            byline: None,
+            excerpt: None,
+            published: None,
+            language: None,
+            site_name: None,
+        };
+        let result = format_metadata_frontmatter(&meta, "https://example.com", 0);
+        assert!(result.contains("title: \"Untitled\""));
+    }
+
+    // --- yaml_escape_string unit tests ---
+
+    #[test]
+    fn test_yaml_escape_backslash_and_quotes() {
+        assert_eq!(yaml_escape_string(r#"a\b"c"#), r#"a\\b\"c"#);
+    }
+
+    #[test]
+    fn test_yaml_escape_no_change() {
+        assert_eq!(yaml_escape_string("plain text"), "plain text");
     }
 }
