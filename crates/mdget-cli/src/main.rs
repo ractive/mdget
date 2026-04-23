@@ -121,6 +121,15 @@ struct Cli {
     )]
     timeout: u64,
 
+    /// Number of retries for transient HTTP errors (5xx, timeouts)
+    #[arg(
+        long = "retries",
+        default_value = "2",
+        value_name = "N",
+        long_help = "Number of retries for transient HTTP errors.\n\nRetries on 5xx status codes and network/timeout errors with exponential\nbackoff (1s, 2s, 4s). Does NOT retry on 4xx client errors."
+    )]
+    retries: u32,
+
     /// Override User-Agent header
     #[arg(short = 'A', long = "user-agent", value_name = "UA")]
     user_agent: Option<String>,
@@ -238,6 +247,8 @@ fn process_single(input: &str, cli: &Cli) -> anyhow::Result<(String, Option<Stri
                 &mdget_core::FetchOptions {
                     timeout_secs: cli.timeout,
                     user_agent: cli.user_agent.clone(),
+                    retries: cli.retries,
+                    quiet: cli.quiet,
                 },
             )?
         }
@@ -276,6 +287,12 @@ fn process_single(input: &str, cli: &Cli) -> anyhow::Result<(String, Option<Stri
             None,
             mdget_core::Metadata::default(),
         ),
+        "application/pdf" => {
+            anyhow::bail!(
+                "PDF content detected; mdget cannot extract text from PDFs.\n\
+                 Try a dedicated tool like pdftotext, or convert the PDF to HTML first."
+            );
+        }
         t if is_binary_mime(t) => {
             anyhow::bail!("binary content ({mime_type}); mdget only processes HTML pages");
         }

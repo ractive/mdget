@@ -1360,3 +1360,287 @@ fn cli_metadata_with_local_file() {
         "body should follow frontmatter"
     );
 }
+
+// ---------------------------------------------------------------------------
+// 39. cli_retries_on_5xx_exhausted
+// ---------------------------------------------------------------------------
+#[test]
+fn cli_retries_on_5xx_exhausted() {
+    let mut server = Server::new();
+    // Server always returns 500; with --retries 1 we expect 2 total requests.
+    let mock = server
+        .mock("GET", "/fail")
+        .with_status(500)
+        .with_header("Content-Type", "text/html; charset=utf-8")
+        .with_body(b"Internal Server Error")
+        .expect(2)
+        .create();
+
+    let url = format!("{}/fail", server.url());
+    let output = mdget()
+        .args(["--retries", "1", "-q", &url])
+        .output()
+        .unwrap();
+
+    assert!(
+        !output.status.success(),
+        "should fail when all retries exhausted"
+    );
+    mock.assert();
+}
+
+// ---------------------------------------------------------------------------
+// 40. cli_no_retry_on_4xx
+// ---------------------------------------------------------------------------
+#[test]
+fn cli_no_retry_on_4xx() {
+    let mut server = Server::new();
+    // 4xx responses should not be retried; expect exactly 1 request.
+    let mock = server
+        .mock("GET", "/notfound")
+        .with_status(404)
+        .with_header("Content-Type", "text/html; charset=utf-8")
+        .with_body(b"Not Found")
+        .expect(1)
+        .create();
+
+    let url = format!("{}/notfound", server.url());
+    let output = mdget()
+        .args(["--retries", "2", "-q", &url])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success(), "should fail on 404");
+    mock.assert();
+}
+
+// ---------------------------------------------------------------------------
+// 41. cli_reports_redirect_chain
+// ---------------------------------------------------------------------------
+#[test]
+fn cli_reports_redirect_chain() {
+    let mut server = Server::new();
+
+    let end_url = format!("{}/end", server.url());
+    let middle_url = format!("{}/middle", server.url());
+
+    let mock_start = server
+        .mock("GET", "/start")
+        .with_status(301)
+        .with_header("Location", &middle_url)
+        .with_body(b"")
+        .create();
+    let mock_middle = server
+        .mock("GET", "/middle")
+        .with_status(301)
+        .with_header("Location", &end_url)
+        .with_body(b"")
+        .create();
+    let mock_end = server
+        .mock("GET", "/end")
+        .with_status(200)
+        .with_header("Content-Type", "text/html; charset=utf-8")
+        .with_body(TEST_HTML)
+        .create();
+
+    let url = format!("{}/start", server.url());
+    let output = mdget().args(["--retries", "0", &url]).output().unwrap();
+
+    assert!(output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains('\u{2192}'),
+        "stderr should contain redirect arrow →, got: {stderr}"
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(!stdout.is_empty(), "stdout should have article content");
+
+    mock_start.assert();
+    mock_middle.assert();
+    mock_end.assert();
+}
+
+// ---------------------------------------------------------------------------
+// 42. cli_follows_meta_refresh
+// ---------------------------------------------------------------------------
+#[test]
+fn cli_follows_meta_refresh() {
+    let mut server = Server::new();
+
+    let target_url = format!("{}/target", server.url());
+    let refresh_html = format!(
+        r#"<!DOCTYPE html>
+<html>
+<head>
+  <meta http-equiv="refresh" content="0; url={target_url}">
+  <title>Redirecting</title>
+</head>
+<body><p>Redirecting...</p></body>
+</html>"#
+    );
+
+    let mock_refresh = server
+        .mock("GET", "/refresh")
+        .with_status(200)
+        .with_header("Content-Type", "text/html; charset=utf-8")
+        .with_body(refresh_html.as_bytes())
+        .create();
+    let mock_target = server
+        .mock("GET", "/target")
+        .with_status(200)
+        .with_header("Content-Type", "text/html; charset=utf-8")
+        .with_body(TEST_HTML)
+        .create();
+
+    let url = format!("{}/refresh", server.url());
+    let output = mdget().args(["--retries", "0", &url]).output().unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("paragraph"),
+        "stdout should contain article content, got: {stdout}"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.to_lowercase().contains("meta refresh"),
+        "stderr should mention meta refresh, got: {stderr}"
+    );
+
+    mock_refresh.assert();
+    mock_target.assert();
+}
+
+// ---------------------------------------------------------------------------
+// 43. cli_pdf_content_type_error
+// ---------------------------------------------------------------------------
+#[test]
+fn cli_pdf_content_type_error() {
+    let mut server = Server::new();
+    let mock = server
+        .mock("GET", "/doc.pdf")
+        .with_status(200)
+        .with_header("Content-Type", "application/pdf")
+        .with_body(b"%PDF-1.4 fake pdf bytes")
+        .create();
+
+    let url = format!("{}/doc.pdf", server.url());
+    let output = mdget()
+        .args(["--retries", "0", "-q", &url])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success(), "should fail for PDF content");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.to_uppercase().contains("PDF"),
+        "stderr should mention PDF, got: {stderr}"
+    );
+    assert!(
+        stderr.contains("pdftotext"),
+        "stderr should mention pdftotext, got: {stderr}"
+    );
+
+    mock.assert();
+}
+
+// ---------------------------------------------------------------------------
+// 44. cli_retries_flag_in_help
+// ---------------------------------------------------------------------------
+#[test]
+fn cli_retries_flag_in_help() {
+    let output = mdget().args(["--help"]).output().unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("--retries"),
+        "help output should document --retries flag"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 45. cli_redirect_chain_with_meta_refresh
+// ---------------------------------------------------------------------------
+#[test]
+fn cli_redirect_chain_with_meta_refresh() {
+    let mut server = Server::new();
+
+    let final_url = format!("{}/final", server.url());
+    let redir_url = format!("{}/redir", server.url());
+
+    let refresh_html = format!(
+        r#"<!DOCTYPE html>
+<html>
+<head>
+  <meta http-equiv="refresh" content="0; url={final_url}">
+  <title>Refreshing</title>
+</head>
+<body><p>Please wait...</p></body>
+</html>"#
+    );
+
+    let mock_start = server
+        .mock("GET", "/start")
+        .with_status(301)
+        .with_header("Location", &redir_url)
+        .with_body(b"")
+        .create();
+    let mock_redir = server
+        .mock("GET", "/redir")
+        .with_status(200)
+        .with_header("Content-Type", "text/html; charset=utf-8")
+        .with_body(refresh_html.as_bytes())
+        .create();
+    let mock_final = server
+        .mock("GET", "/final")
+        .with_status(200)
+        .with_header("Content-Type", "text/html; charset=utf-8")
+        .with_body(TEST_HTML)
+        .create();
+
+    let url = format!("{}/start", server.url());
+    let output = mdget().args(["--retries", "0", &url]).output().unwrap();
+
+    assert!(output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains('\u{2192}'),
+        "stderr should contain redirect arrow → for HTTP redirect, got: {stderr}"
+    );
+    assert!(
+        stderr.to_lowercase().contains("meta refresh"),
+        "stderr should mention meta refresh, got: {stderr}"
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(!stdout.is_empty(), "stdout should have article content");
+
+    mock_start.assert();
+    mock_redir.assert();
+    mock_final.assert();
+}
+
+// ---------------------------------------------------------------------------
+// 46. cli_retries_zero_no_retry
+// ---------------------------------------------------------------------------
+#[test]
+fn cli_retries_zero_no_retry() {
+    let mut server = Server::new();
+    // With --retries 0 there should be exactly 1 request even on 500.
+    let mock = server
+        .mock("GET", "/always500")
+        .with_status(500)
+        .with_header("Content-Type", "text/html; charset=utf-8")
+        .with_body(b"Internal Server Error")
+        .expect(1)
+        .create();
+
+    let url = format!("{}/always500", server.url());
+    let output = mdget()
+        .args(["--retries", "0", "-q", &url])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success(), "should fail on 500");
+    mock.assert();
+}
