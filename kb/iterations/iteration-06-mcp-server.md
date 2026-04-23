@@ -41,6 +41,7 @@ Fetches a URL and returns its content as markdown.
 - [ ] Wire tool handler to existing core pipeline
 - [ ] Implement stdio transport
 - [ ] Handle errors as MCP tool errors (not process crashes)
+- [ ] Add SSRF protection: reject requests to private/loopback IPs (127.0.0.0/8, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, ::1, link-local) — agents can be tricked into fetching internal URLs
 - [ ] Add integration tests (send JSON-RPC requests, verify responses)
 - [ ] Document MCP server setup in README
 - [ ] Run quality gates
@@ -50,3 +51,4 @@ Fetches a URL and returns its content as markdown.
 - **Stdio transport only for v1**: simplest, works with all MCP clients (Claude Code, Claude Desktop, etc.). HTTP/SSE transport can come later if needed.
 - **Single tool**: one `fetch_markdown` tool maps cleanly to the CLI's core function. Batch fetching could be a second tool later.
 - **Reuse core pipeline**: the MCP handler calls the same `mdget-core` functions as the CLI. No duplication.
+- **SSRF protection required**: unlike CLI usage (where the user controls inputs), MCP exposes fetch to AI agents that could be tricked into requesting internal IPs. Block private/loopback ranges before connecting. (Flagged in iter-5b review as "revisit when MCP server is added".)
