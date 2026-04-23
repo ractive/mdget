@@ -23,6 +23,9 @@ mdget https://example.com/article -O
 # Skip readability, convert full HTML
 mdget https://example.com/article --raw
 
+# Control retries for flaky servers
+mdget https://example.com --retries 5
+
 # Set timeout and custom user agent
 mdget https://example.com -t 60 -A "MyBot/1.0"
 
@@ -50,6 +53,7 @@ mdget <URL> --include-metadata     # prepend YAML frontmatter
 mdget <URL> -m                     # metadata only, skip body
 mdget <URL> --no-images            # strip image references
 mdget <URL> --max-length 5000      # truncate to N characters
+mdget <URL> --retries 5             # retry transient errors (default: 2)
 mdget <URL> -t 30                  # timeout in seconds (default: 30)
 mdget -V                           # print version
 ```
@@ -65,8 +69,10 @@ mdget -V                           # print version
 | `--metadata-only` | `-m` | Print only YAML frontmatter, skip body |
 | `--no-images` | | Strip image references from markdown output |
 | `--max-length` | | Truncate output to N characters |
+| `--retries` | | Number of retries for transient HTTP errors (default: 2) |
 | `--timeout` | `-t` | HTTP timeout in seconds (default: 30) |
 | `--user-agent` | `-A` | Override User-Agent header |
+| `--quiet` | `-q` | Suppress progress messages on stderr |
 | `--version` | `-V` | Print version info |
 
 ## Claude Code Integration
@@ -89,6 +95,8 @@ mdget deinit --global
 
 - Content on stdout, progress on stderr -- pipe-friendly
 - Uses readability algorithm for content extraction (like browser reader mode)
+- Automatic retry with exponential backoff for transient HTTP errors
+- Follows HTTP redirects and `<meta http-equiv="refresh">` HTML redirects
 - Single binary, no runtime dependencies
 - Default user-agent: `mdget/<version>`
 
