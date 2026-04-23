@@ -1,5 +1,5 @@
 **/target
 .env
-.claude/memory
-.claude/agent-memory
-.claude/worktrees
+.claude/
+kb/.obsidian/
+test_img.rs
