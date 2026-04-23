@@ -6,7 +6,7 @@ tags:
   - iteration
   - output
   - metadata
-status: in-progress
+status: completed
 branch: iter-4/output-control
 ---
 
