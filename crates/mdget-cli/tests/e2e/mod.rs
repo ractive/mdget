@@ -1644,3 +1644,17 @@ fn cli_retries_zero_no_retry() {
     assert!(!output.status.success(), "should fail on 500");
     mock.assert();
 }
+
+// ---------------------------------------------------------------------------
+// 47. cli_help_contains_cookbook
+// ---------------------------------------------------------------------------
+#[test]
+fn cli_help_contains_cookbook() {
+    mdget()
+        .arg("--help")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("COOKBOOK:"))
+        .stdout(predicate::str::contains("BEHAVIOR NOTES:"))
+        .stdout(predicate::str::contains("AGENT TIPS:"));
+}
