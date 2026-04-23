@@ -222,9 +222,7 @@ fn follow_meta_refresh(
     }
 
     // Only HTML content can carry meta-refresh tags.
-    let is_html = content_type
-        .as_deref()
-        .is_none_or(|ct| ct.contains("html")); // assume HTML if content-type unknown
+    let is_html = content_type.as_deref().is_none_or(|ct| ct.contains("html")); // assume HTML if content-type unknown
 
     if !is_html {
         return Ok((body, current_url, content_type));
