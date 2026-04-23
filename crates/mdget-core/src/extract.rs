@@ -560,6 +560,13 @@ fn is_table_line(line: &str) -> bool {
     t.starts_with('|') || t.starts_with("|-") || t.starts_with("|:")
 }
 
+/// Join lines with newlines and append a trailing newline.
+fn join_lines(lines: &[&str]) -> String {
+    let mut s = lines.join("\n");
+    s.push('\n');
+    s
+}
+
 /// Process a block of table lines, returning the appropriate representation.
 fn process_table(lines: &[&str]) -> String {
     // Split into header, separator, and data rows.
@@ -567,19 +574,19 @@ fn process_table(lines: &[&str]) -> String {
 
     // If we couldn't identify a separator, just pass through unchanged.
     let Some(sep_idx) = sep_idx else {
-        return lines.join("\n") + "\n";
+        return join_lines(lines);
     };
 
     let header_cells = split_table_row(header_row);
 
     // Need at least one header column.
     if header_cells.is_empty() {
-        return lines.join("\n") + "\n";
+        return join_lines(lines);
     }
 
     // No data rows — table is header-only; pass through unchanged.
     if data_rows.is_empty() {
-        return lines[..=sep_idx].join("\n") + "\n";
+        return join_lines(&lines[..=sep_idx]);
     }
 
     // Parse data rows into cell vecs.
@@ -609,7 +616,7 @@ fn process_table(lines: &[&str]) -> String {
 
     if !is_degenerate {
         // Good table — pass through unchanged.
-        return lines.join("\n") + "\n";
+        return join_lines(lines);
     }
 
     // Determine conversion format.
@@ -679,7 +686,7 @@ fn process_table(lines: &[&str]) -> String {
 
     // If nothing was emitted (all rows were empty), return the original table.
     if out.is_empty() {
-        lines.join("\n") + "\n"
+        join_lines(lines)
     } else {
         out
     }

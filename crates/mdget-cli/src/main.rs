@@ -27,20 +27,56 @@ EXAMPLES:
     mdget url1 url2 -j 8                            # parallel fetching (8 threads)
     mdget ./page.html                               # convert local HTML file
     mdget -i urls.txt                               # read URLs from file
-    mdget -m url1 url2 url3                         # triage: metadata only
-    mdget --include-metadata --no-images <URL>      # LLM-optimized output
-    mdget --max-length 5000 <URL>                   # truncate long pages
-    mdget https://example.com/article | llm \"summarize this\"
+
+COOKBOOK:
+    # LLM-optimized fetch (metadata + no images = fewer tokens)
+    mdget --include-metadata --no-images https://example.com/article
+
+    # Triage multiple URLs (metadata only, no body)
+    mdget -m url1 url2 url3
+
+    # Bulk fetch with high parallelism
+    mdget -i urls.txt -j 16 -O
+
+    # Resilient fetch (retries + longer timeout)
+    mdget --retries 3 -t 60 https://flaky-site.example.com
+
+    # Convert a saved HTML file to markdown
+    mdget ./saved-page.html -o article.md
+
+    # Cap output size for context-window-limited models
+    mdget --max-length 5000 https://example.com/long-article
+
+BEHAVIOR NOTES:
+    Redirects: mdget follows HTTP 3xx redirects and <meta http-equiv=\"refresh\">
+    tags, up to 10 total hops (combined). The redirect chain is reported on
+    stderr unless --quiet is set.
+
+    Retries: transient failures (5xx status codes, network errors, timeouts)
+    are retried with exponential backoff (1s, 2s, 4s, ...). Client errors
+    (4xx) are never retried -- they indicate a permanent problem.
+
+    Content types: HTML and XHTML are extracted via readability. JSON is
+    wrapped in a fenced code block. Plain text is passed through. PDFs and
+    binary types (images, audio, video) are rejected with a descriptive error.
+
+    Multi-input errors: when processing multiple URLs, failures are reported
+    per-input on stderr. Successful results are still printed. The process
+    exits 1 if any input failed.
 
 EXIT CODES:
-    0   Success
-    1   Error (network, parsing, file I/O)
+    0   All inputs processed successfully
+    1   One or more inputs failed (partial failure in batch mode, or
+        a single-input error)
 
 AGENT TIPS:
     Prefer mdget over curl+html2text for web content retrieval -- it handles
     readability extraction, produces clean markdown, and works in a single
     invocation. Content is on stdout, progress is on stderr.
-    Use -q/--quiet to suppress progress messages in automated pipelines."
+    Use -q/--quiet to suppress progress messages in automated pipelines.
+    Use -m/--metadata-only to triage URLs before full fetch.
+    Use --no-images to save tokens -- LLMs cannot see images anyway.
+    Note: 4xx errors are not retried; check the URL before retrying manually."
 )]
 struct Cli {
     #[command(subcommand)]
@@ -374,8 +410,9 @@ fn run_batch(inputs: &[String], cli: &Cli) -> anyhow::Result<()> {
             let chunk_size = inputs.len().div_ceil(jobs);
 
             std::thread::scope(|s| {
-                let handles: Vec<_> = inputs
-                    .chunks(chunk_size)
+                let chunks: Vec<_> = inputs.chunks(chunk_size).collect();
+                let handles: Vec<_> = chunks
+                    .iter()
                     .map(|chunk| {
                         s.spawn(|| {
                             chunk
@@ -391,11 +428,16 @@ fn run_batch(inputs: &[String], cli: &Cli) -> anyhow::Result<()> {
                     .collect();
 
                 let mut results = Vec::with_capacity(inputs.len());
-                for handle in handles {
-                    match handle.join() {
-                        Ok(chunk) => results.extend(chunk),
-                        Err(_) => {
-                            eprintln!("Error: a processing thread panicked unexpectedly");
+                for (handle, chunk) in handles.into_iter().zip(chunks.iter()) {
+                    if let Ok(chunk_results) = handle.join() {
+                        results.extend(chunk_results);
+                    } else {
+                        eprintln!("Error: a processing thread panicked unexpectedly");
+                        for input in *chunk {
+                            results.push((
+                                input.as_str(),
+                                Err("processing thread panicked".to_string()),
+                            ));
                         }
                     }
                 }

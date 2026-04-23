@@ -1,10 +1,34 @@
+use std::io::Read as _;
+
 use anyhow::Context;
 use url::Url;
 
-const MAX_REDIRECTS: usize = 10;
-const MAX_META_REFRESH_HOPS: usize = 3;
+const MAX_TOTAL_HOPS: usize = 10;
+const MAX_RESPONSE_SIZE: usize = 50 * 1024 * 1024; // 50 MB
 /// Only scan this many bytes for a meta refresh tag — it must be in <head>.
 const META_REFRESH_SCAN_BYTES: usize = 4096;
+
+/// Read the response body with a hard size cap. Checks Content-Length first
+/// as a fast pre-flight, then enforces the limit while reading (protects
+/// against lying Content-Length or chunked-encoding).
+fn read_body_limited(response: reqwest::blocking::Response, url: &Url) -> anyhow::Result<String> {
+    if let Some(cl) = response.content_length()
+        && cl > MAX_RESPONSE_SIZE as u64
+    {
+        anyhow::bail!(
+            "response too large ({cl} bytes, limit is {MAX_RESPONSE_SIZE} bytes) from: {url}",
+        );
+    }
+    let mut body_bytes = Vec::new();
+    response
+        .take(MAX_RESPONSE_SIZE as u64 + 1)
+        .read_to_end(&mut body_bytes)
+        .with_context(|| format!("failed to read response body from: {url}"))?;
+    if body_bytes.len() > MAX_RESPONSE_SIZE {
+        anyhow::bail!("response too large (>{MAX_RESPONSE_SIZE} bytes) from: {url}");
+    }
+    Ok(String::from_utf8_lossy(&body_bytes).into_owned())
+}
 
 pub struct FetchOptions {
     pub timeout_secs: u64,
@@ -118,8 +142,11 @@ fn do_fetch(
     let mut current_url =
         Url::parse(start_url).with_context(|| format!("invalid URL: {start_url}"))?;
 
+    let mut hops: usize = 0;
+
     // --- Phase 1: follow HTTP 3xx redirects ---
-    let response = follow_http_redirects(&mut current_url, options, client, redirect_chain)?;
+    let response =
+        follow_http_redirects(&mut current_url, options, client, redirect_chain, &mut hops)?;
 
     let content_type = response
         .headers()
@@ -127,9 +154,7 @@ fn do_fetch(
         .and_then(|v| v.to_str().ok())
         .map(std::string::ToString::to_string);
 
-    let body = response
-        .text()
-        .with_context(|| format!("failed to read response body from: {current_url}"))?;
+    let body = read_body_limited(response, &current_url)?;
 
     // --- Phase 2: follow meta-refresh hops ---
     let (final_body, final_url, final_content_type) = follow_meta_refresh(
@@ -139,7 +164,7 @@ fn do_fetch(
         options,
         client,
         redirect_chain,
-        0,
+        &mut hops,
     )?;
 
     Ok(FetchResult {
@@ -151,14 +176,15 @@ fn do_fetch(
 }
 
 /// Sends a GET to `current_url`, following 3xx redirects manually until a
-/// non-redirect response is received or `MAX_REDIRECTS` is reached.
+/// non-redirect response is received or `MAX_TOTAL_HOPS` is reached.
 fn follow_http_redirects(
     current_url: &mut Url,
     options: &FetchOptions,
     client: &reqwest::blocking::Client,
     redirect_chain: &mut Vec<String>,
+    hops: &mut usize,
 ) -> anyhow::Result<reqwest::blocking::Response> {
-    for _ in 0..MAX_REDIRECTS {
+    loop {
         let response = client
             .get(current_url.as_str())
             .send()
@@ -167,6 +193,11 @@ fn follow_http_redirects(
         let status = response.status();
 
         if status.is_redirection() {
+            *hops += 1;
+            if *hops > MAX_TOTAL_HOPS {
+                anyhow::bail!("too many redirects (>{MAX_TOTAL_HOPS} hops)");
+            }
+
             let location = response
                 .headers()
                 .get(reqwest::header::LOCATION)
@@ -202,8 +233,6 @@ fn follow_http_redirects(
 
         return Ok(response);
     }
-
-    anyhow::bail!("too many redirects (>{MAX_REDIRECTS}) following URL: {current_url}")
 }
 
 /// Checks `body` for a `<meta http-equiv="refresh">` tag. If found and within
@@ -215,12 +244,8 @@ fn follow_meta_refresh(
     options: &FetchOptions,
     client: &reqwest::blocking::Client,
     redirect_chain: &mut Vec<String>,
-    depth: usize,
+    hops: &mut usize,
 ) -> anyhow::Result<(String, Url, Option<String>)> {
-    if depth >= MAX_META_REFRESH_HOPS {
-        return Ok((body, current_url, content_type));
-    }
-
     // Only HTML content can carry meta-refresh tags.
     let is_html = content_type.as_deref().is_none_or(|ct| ct.contains("html")); // assume HTML if content-type unknown
 
@@ -232,6 +257,11 @@ fn follow_meta_refresh(
         return Ok((body, current_url, content_type));
     };
 
+    *hops += 1;
+    if *hops > MAX_TOTAL_HOPS {
+        anyhow::bail!("too many redirects (>{MAX_TOTAL_HOPS} hops)");
+    }
+
     if !options.quiet {
         eprintln!("  \u{21AA} meta refresh \u{2192} {target_url}");
     }
@@ -240,7 +270,7 @@ fn follow_meta_refresh(
     // Fetch the meta-refresh target (HTTP redirects within this hop are also
     // followed, so we pass redirect_chain through).
     let mut next_url = target_url;
-    let response = follow_http_redirects(&mut next_url, options, client, redirect_chain)?;
+    let response = follow_http_redirects(&mut next_url, options, client, redirect_chain, hops)?;
 
     let next_content_type = response
         .headers()
@@ -248,9 +278,7 @@ fn follow_meta_refresh(
         .and_then(|v| v.to_str().ok())
         .map(std::string::ToString::to_string);
 
-    let next_body = response
-        .text()
-        .with_context(|| format!("failed to read response body from: {next_url}"))?;
+    let next_body = read_body_limited(response, &next_url)?;
 
     // Recurse in case of chained meta-refreshes.
     follow_meta_refresh(
@@ -260,7 +288,7 @@ fn follow_meta_refresh(
         options,
         client,
         redirect_chain,
-        depth + 1,
+        hops,
     )
 }
 
