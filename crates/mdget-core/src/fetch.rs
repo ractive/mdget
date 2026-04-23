@@ -131,7 +131,7 @@ fn is_client_error(e: &anyhow::Error) -> bool {
 }
 
 /// Performs the actual HTTP GET, follows 3xx redirects manually (up to
-/// `MAX_REDIRECTS`), checks for meta-refresh in the final response body, and
+/// `MAX_TOTAL_HOPS`), checks for meta-refresh in the final response body, and
 /// returns a `FetchResult`.
 fn do_fetch(
     start_url: &str,
