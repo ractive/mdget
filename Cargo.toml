@@ -15,6 +15,7 @@ mdget-core = { path = "crates/mdget-core", version = "0.1.0" }
 
 # External dependencies
 anyhow = "1"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 assert_cmd = "2"
 clap = "4.6.0"
 dom_smoothie = "0.17"

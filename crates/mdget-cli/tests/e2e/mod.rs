@@ -945,3 +945,418 @@ fn cli_input_file_with_local_paths() {
         .success()
         .stdout(predicate::str::contains("paragraph with enough content"));
 }
+
+// ===========================================================================
+// Output control flags (iteration 4)
+// ===========================================================================
+
+const TEST_HTML_WITH_IMAGES: &[u8] = br#"<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>Image Test Article</title>
+  <meta name="author" content="Jane Author">
+  <meta name="description" content="An article with images for testing">
+  <meta property="article:published_time" content="2026-04-15">
+  <meta property="og:site_name" content="Test News">
+</head>
+<body>
+  <article>
+    <h1>Image Test Article</h1>
+    <p>First paragraph with enough content to pass readability. We need quite a bit
+    of text here because readability algorithms typically require a minimum amount of
+    content before they consider a page readable.</p>
+    <img src="https://example.com/photo.jpg" alt="A photo">
+    <p>Second paragraph also needs content. The readability algorithm needs sufficient
+    text to identify the main content area of the page without which it may fail.</p>
+    <img src="https://example.com/chart.png" alt="A chart">
+    <p>Third paragraph for good measure to ensure extraction works properly and
+    we get enough content for meaningful word count testing across all scenarios.</p>
+  </article>
+</body>
+</html>"#;
+
+// ---------------------------------------------------------------------------
+// 29. cli_include_metadata
+// ---------------------------------------------------------------------------
+#[test]
+fn cli_include_metadata() {
+    let mut server = Server::new();
+    let mock = server
+        .mock("GET", "/article")
+        .with_status(200)
+        .with_header("Content-Type", "text/html; charset=utf-8")
+        .with_body(TEST_HTML_WITH_IMAGES)
+        .create();
+
+    let output = mdget()
+        .args([
+            "-t",
+            "5",
+            "--include-metadata",
+            &format!("{}/article", server.url()),
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    // Frontmatter should be present
+    assert!(
+        stdout.starts_with("---\n"),
+        "output should start with YAML frontmatter: {stdout}"
+    );
+    assert!(
+        stdout.contains("title:"),
+        "frontmatter should contain title"
+    );
+    assert!(
+        stdout.contains("source:"),
+        "frontmatter should contain source"
+    );
+    assert!(
+        stdout.contains("fetched:"),
+        "frontmatter should contain fetched"
+    );
+    assert!(
+        stdout.contains("word_count:"),
+        "frontmatter should contain word_count"
+    );
+    // Body should also be present after the frontmatter
+    assert!(
+        stdout.contains("First paragraph"),
+        "body should appear after frontmatter"
+    );
+
+    mock.assert();
+}
+
+// ---------------------------------------------------------------------------
+// 30. cli_metadata_only
+// ---------------------------------------------------------------------------
+#[test]
+fn cli_metadata_only() {
+    let mut server = Server::new();
+    let mock = server
+        .mock("GET", "/article")
+        .with_status(200)
+        .with_header("Content-Type", "text/html; charset=utf-8")
+        .with_body(TEST_HTML_WITH_IMAGES)
+        .create();
+
+    let output = mdget()
+        .args(["-t", "5", "-m", &format!("{}/article", server.url())])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    // Frontmatter should be present
+    assert!(
+        stdout.starts_with("---\n"),
+        "output should start with YAML frontmatter"
+    );
+    assert!(stdout.contains("title:"));
+    assert!(stdout.contains("word_count:"));
+    // Body should NOT be present
+    assert!(
+        !stdout.contains("First paragraph"),
+        "body should not appear in metadata-only mode"
+    );
+
+    mock.assert();
+}
+
+// ---------------------------------------------------------------------------
+// 31. cli_no_images
+// ---------------------------------------------------------------------------
+#[test]
+fn cli_no_images() {
+    let mut server = Server::new();
+    let mock = server
+        .mock("GET", "/article")
+        .with_status(200)
+        .with_header("Content-Type", "text/html; charset=utf-8")
+        .with_body(TEST_HTML_WITH_IMAGES)
+        .create();
+
+    let output = mdget()
+        .args([
+            "-t",
+            "5",
+            "--no-images",
+            &format!("{}/article", server.url()),
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    // Images should be stripped
+    assert!(
+        !stdout.contains("!["),
+        "image references should be stripped: {stdout}"
+    );
+    // Regular content should remain
+    assert!(stdout.contains("paragraph"), "text content should remain");
+
+    mock.assert();
+}
+
+// ---------------------------------------------------------------------------
+// 32. cli_max_length
+// ---------------------------------------------------------------------------
+#[test]
+fn cli_max_length() {
+    let mut server = Server::new();
+    let mock = server
+        .mock("GET", "/article")
+        .with_status(200)
+        .with_header("Content-Type", "text/html; charset=utf-8")
+        .with_body(TEST_HTML)
+        .create();
+
+    let output = mdget()
+        .args([
+            "-t",
+            "5",
+            "--max-length",
+            "50",
+            &format!("{}/article", server.url()),
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("[Truncated]"),
+        "truncated output should contain [Truncated] marker"
+    );
+    // Output should be reasonably short
+    assert!(
+        stdout.len() <= 80,
+        "output should be near max-length (got {} chars)",
+        stdout.len()
+    );
+
+    mock.assert();
+}
+
+// ---------------------------------------------------------------------------
+// 33. cli_max_length_no_truncation_when_short
+// ---------------------------------------------------------------------------
+#[test]
+fn cli_max_length_no_truncation_when_short() {
+    let mut server = Server::new();
+    let mock = server
+        .mock("GET", "/article")
+        .with_status(200)
+        .with_header("Content-Type", "text/html; charset=utf-8")
+        .with_body(TEST_HTML)
+        .create();
+
+    let output = mdget()
+        .args([
+            "-t",
+            "5",
+            "--max-length",
+            "100000",
+            &format!("{}/article", server.url()),
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        !stdout.contains("[Truncated]"),
+        "should not truncate when content fits within max-length"
+    );
+
+    mock.assert();
+}
+
+// ---------------------------------------------------------------------------
+// 34. cli_include_metadata_with_no_images
+// ---------------------------------------------------------------------------
+#[test]
+fn cli_include_metadata_with_no_images() {
+    let mut server = Server::new();
+    let mock = server
+        .mock("GET", "/article")
+        .with_status(200)
+        .with_header("Content-Type", "text/html; charset=utf-8")
+        .with_body(TEST_HTML_WITH_IMAGES)
+        .create();
+
+    let output = mdget()
+        .args([
+            "-t",
+            "5",
+            "--include-metadata",
+            "--no-images",
+            &format!("{}/article", server.url()),
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    // Has metadata
+    assert!(stdout.starts_with("---\n"));
+    assert!(stdout.contains("title:"));
+    // No images
+    assert!(
+        !stdout.contains("!["),
+        "images should be stripped even with metadata"
+    );
+    // Has body
+    assert!(stdout.contains("paragraph"));
+
+    mock.assert();
+}
+
+// ---------------------------------------------------------------------------
+// 35. cli_include_metadata_no_images_max_length
+// ---------------------------------------------------------------------------
+#[test]
+fn cli_include_metadata_no_images_max_length() {
+    let mut server = Server::new();
+    let mock = server
+        .mock("GET", "/article")
+        .with_status(200)
+        .with_header("Content-Type", "text/html; charset=utf-8")
+        .with_body(TEST_HTML_WITH_IMAGES)
+        .create();
+
+    let output = mdget()
+        .args([
+            "-t",
+            "5",
+            "--include-metadata",
+            "--no-images",
+            "--max-length",
+            "100",
+            &format!("{}/article", server.url()),
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    // Has metadata frontmatter
+    assert!(stdout.starts_with("---\n"), "should have frontmatter");
+    // Has truncation marker
+    assert!(
+        stdout.contains("[Truncated]"),
+        "should be truncated: {stdout}"
+    );
+    // No images
+    assert!(!stdout.contains("!["), "images should be stripped");
+
+    mock.assert();
+}
+
+// ---------------------------------------------------------------------------
+// 36. cli_metadata_only_with_no_images
+// ---------------------------------------------------------------------------
+#[test]
+fn cli_metadata_only_with_no_images() {
+    let mut server = Server::new();
+    let mock = server
+        .mock("GET", "/article")
+        .with_status(200)
+        .with_header("Content-Type", "text/html; charset=utf-8")
+        .with_body(TEST_HTML_WITH_IMAGES)
+        .create();
+
+    let output = mdget()
+        .args([
+            "-t",
+            "5",
+            "-m",
+            "--no-images",
+            &format!("{}/article", server.url()),
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    // Should have frontmatter
+    assert!(stdout.starts_with("---\n"));
+    assert!(stdout.contains("word_count:"));
+    // Should not have body
+    assert!(!stdout.contains("paragraph"));
+
+    mock.assert();
+}
+
+// ---------------------------------------------------------------------------
+// 37. cli_metadata_only_batch
+// ---------------------------------------------------------------------------
+#[test]
+fn cli_metadata_only_batch() {
+    let mut server = Server::new();
+    let mock1 = server
+        .mock("GET", "/page1")
+        .with_status(200)
+        .with_header("Content-Type", "text/html; charset=utf-8")
+        .with_body(TEST_HTML)
+        .create();
+    let mock2 = server
+        .mock("GET", "/page2")
+        .with_status(200)
+        .with_header("Content-Type", "text/html; charset=utf-8")
+        .with_body(TEST_HTML_WITH_IMAGES)
+        .create();
+
+    let output = mdget()
+        .args([
+            "-t",
+            "5",
+            "-m",
+            &format!("{}/page1", server.url()),
+            &format!("{}/page2", server.url()),
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    // Should have multiple frontmatter blocks separated by ---
+    let frontmatter_count = stdout.matches("title:").count();
+    assert!(
+        frontmatter_count >= 2,
+        "should have metadata for both pages, got {frontmatter_count}"
+    );
+
+    mock1.assert();
+    mock2.assert();
+}
+
+// ---------------------------------------------------------------------------
+// 38. cli_metadata_with_local_file
+// ---------------------------------------------------------------------------
+#[test]
+fn cli_metadata_with_local_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let file_path = dir.path().join("page.html");
+    std::fs::write(&file_path, TEST_HTML).unwrap();
+
+    let output = mdget()
+        .args(["--include-metadata", file_path.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.starts_with("---\n"), "should have frontmatter");
+    assert!(stdout.contains("title:"));
+    assert!(stdout.contains("source: \"file://"));
+    assert!(stdout.contains("word_count:"));
+    assert!(
+        stdout.contains("paragraph"),
+        "body should follow frontmatter"
+    );
+}

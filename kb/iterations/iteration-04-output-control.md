@@ -1,9 +1,12 @@
 ---
-title: "Output control & metadata"
+title: Output control & metadata
 type: iteration
 date: 2026-04-17
-tags: [iteration, output, metadata]
-status: planned
+tags:
+  - iteration
+  - output
+  - metadata
+status: in-progress
 branch: iter-4/output-control
 ---
 
@@ -40,16 +43,16 @@ Fields are included only when available from the page. `title`, `source`, `fetch
 
 ## Tasks
 
-- [ ] Implement `--metadata-only` / `-m` flag — fetch page, extract metadata, print only YAML frontmatter, skip body
-- [ ] Implement `--include-metadata` flag
-- [ ] Extract metadata from dom_smoothie readability output (title, byline, excerpt, published, language, site_name)
-- [ ] Generate YAML frontmatter block — always: title, source, fetched, word_count; optional: byline, excerpt, published, language, site_name
-- [ ] Implement `--no-images` flag — strip `![alt](url)` patterns from markdown output
-- [ ] Implement `--max-length N` flag — truncate output to N characters (clean break at paragraph/sentence boundary if possible)
-- [ ] Ensure flags compose correctly (e.g. `--include-metadata --no-images --max-length 3000`)
-- [ ] Metadata word count should reflect post-processing (after image stripping, before truncation)
-- [ ] Add e2e tests for each flag and combinations
-- [ ] Run quality gates
+- [x] Implement `--metadata-only` / `-m` flag — fetch page, extract metadata, print only YAML frontmatter, skip body
+- [x] Implement `--include-metadata` flag
+- [x] Extract metadata from dom_smoothie readability output (title, byline, excerpt, published, language, site_name)
+- [x] Generate YAML frontmatter block — always: title, source, fetched, word_count; optional: byline, excerpt, published, language, site_name
+- [x] Implement `--no-images` flag — strip `![alt](url)` patterns from markdown output
+- [x] Implement `--max-length N` flag — truncate output to N characters (clean break at paragraph/sentence boundary if possible)
+- [x] Ensure flags compose correctly (e.g. `--include-metadata --no-images --max-length 3000`)
+- [x] Metadata word count should reflect post-processing (after image stripping, before truncation)
+- [x] Add e2e tests for each flag and combinations
+- [x] Run quality gates
 
 ## Design Decisions
 
