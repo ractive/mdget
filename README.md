@@ -49,6 +49,12 @@ mdget crawl --depth 2 --output-dir ./docs https://docs.example.com
 
 # Crawl with higher page limit
 mdget crawl --max-pages 100 https://docs.example.com
+
+# Crawl using sitemap.xml to discover pages
+mdget crawl --sitemap --depth 0 https://docs.example.com
+
+# Ignore robots.txt restrictions
+mdget crawl --ignore-robots https://docs.example.com
 ```
 
 ## CLI Reference
@@ -67,6 +73,8 @@ mdget <URL> -t 30                  # timeout in seconds (default: 30)
 mdget crawl <URL>                  # crawl site following links (depth 1, max 20)
 mdget crawl --depth 2 <URL>        # follow links 2 levels deep
 mdget crawl --output-dir ./docs <URL>  # save each page as a file
+mdget crawl --sitemap --depth 0 <URL>  # discover pages via sitemap.xml
+mdget crawl --ignore-robots <URL>      # bypass robots.txt restrictions
 mdget -V                           # print version
 ```
 
@@ -97,6 +105,8 @@ mdget -V                           # print version
 | `--follow-external` | | Follow links to other hosts |
 | `--output-dir` | | Save each page as a file (mirrors URL path) |
 | `--auto-filename` / `-O` | | Auto-generate filename per page |
+| `--ignore-robots` | | Bypass robots.txt restrictions |
+| `--sitemap` | | Discover pages via sitemap.xml and add to crawl queue |
 
 ## MCP Server
 

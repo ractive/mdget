@@ -2303,3 +2303,409 @@ fn crawl_follow_external() {
     );
     mock_root_follow.assert();
 }
+
+// ===========================================================================
+// robots.txt and sitemap.xml tests (iteration 7b)
+// ===========================================================================
+
+// ---------------------------------------------------------------------------
+// 57. robots_txt_blocks_url
+// ---------------------------------------------------------------------------
+#[test]
+fn robots_txt_blocks_url() {
+    let mut server = Server::new();
+
+    let public_url = format!("{}/public/", server.url());
+    let private_url = format!("{}/private/", server.url());
+
+    let robots_body = "User-agent: *\nDisallow: /private/\n";
+    let root_html = crawl_page("Root", "Root body.", &[&public_url, &private_url]);
+    let public_html = crawl_page("Public Page", "Public page content.", &[]);
+    let private_html = crawl_page("Private Page", "Private page content.", &[]);
+
+    let mock_robots = server
+        .mock("GET", "/robots.txt")
+        .with_status(200)
+        .with_header("Content-Type", "text/plain")
+        .with_body(robots_body)
+        .create();
+    let mock_root = server
+        .mock("GET", "/")
+        .with_status(200)
+        .with_header("Content-Type", "text/html; charset=utf-8")
+        .with_body(root_html)
+        .create();
+    let mock_public = server
+        .mock("GET", "/public/")
+        .with_status(200)
+        .with_header("Content-Type", "text/html; charset=utf-8")
+        .with_body(public_html)
+        .create();
+    // /private/ should NOT be fetched because robots.txt disallows it.
+    let mock_private = server
+        .mock("GET", "/private/")
+        .with_status(200)
+        .with_header("Content-Type", "text/html; charset=utf-8")
+        .with_body(private_html)
+        .expect(0)
+        .create();
+
+    let output = mdget()
+        .args([
+            "-t",
+            "5",
+            "--retries",
+            "0",
+            "crawl",
+            "--delay",
+            "0",
+            "--depth",
+            "1",
+            &server.url(),
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "crawl should succeed; stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("Public page content"),
+        "public page should be in output: {stdout}"
+    );
+    assert!(
+        !stdout.contains("Private page content"),
+        "private page should be blocked by robots.txt: {stdout}"
+    );
+
+    mock_robots.assert();
+    mock_root.assert();
+    mock_public.assert();
+    mock_private.assert();
+}
+
+// ---------------------------------------------------------------------------
+// 58. robots_txt_ignore_flag
+// ---------------------------------------------------------------------------
+#[test]
+fn robots_txt_ignore_flag() {
+    let mut server = Server::new();
+
+    let public_url = format!("{}/public/", server.url());
+    let private_url = format!("{}/private/", server.url());
+
+    let robots_body = "User-agent: *\nDisallow: /private/\n";
+    let root_html = crawl_page("Root", "Root body.", &[&public_url, &private_url]);
+    let public_html = crawl_page("Public Page", "Public page content.", &[]);
+    let private_html = crawl_page("Private Page", "Private page content.", &[]);
+
+    let _mock_robots = server
+        .mock("GET", "/robots.txt")
+        .with_status(200)
+        .with_header("Content-Type", "text/plain")
+        .with_body(robots_body)
+        .create();
+    let mock_root = server
+        .mock("GET", "/")
+        .with_status(200)
+        .with_header("Content-Type", "text/html; charset=utf-8")
+        .with_body(root_html)
+        .create();
+    let mock_public = server
+        .mock("GET", "/public/")
+        .with_status(200)
+        .with_header("Content-Type", "text/html; charset=utf-8")
+        .with_body(public_html)
+        .create();
+    let mock_private = server
+        .mock("GET", "/private/")
+        .with_status(200)
+        .with_header("Content-Type", "text/html; charset=utf-8")
+        .with_body(private_html)
+        .create();
+
+    let output = mdget()
+        .args([
+            "-t",
+            "5",
+            "--retries",
+            "0",
+            "crawl",
+            "--delay",
+            "0",
+            "--depth",
+            "1",
+            "--ignore-robots",
+            &server.url(),
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "crawl should succeed; stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("Public page content"),
+        "public page should be in output: {stdout}"
+    );
+    assert!(
+        stdout.contains("Private page content"),
+        "private page should be fetched with --ignore-robots: {stdout}"
+    );
+
+    mock_root.assert();
+    mock_public.assert();
+    mock_private.assert();
+}
+
+// ---------------------------------------------------------------------------
+// 59. robots_txt_crawl_delay
+// ---------------------------------------------------------------------------
+#[test]
+fn robots_txt_crawl_delay() {
+    let mut server = Server::new();
+
+    // robots.txt specifies a large crawl delay, but we only fetch depth 0
+    // so the crawl completes quickly anyway.
+    let robots_body = "User-agent: *\nCrawl-delay: 60\n";
+    let root_html = crawl_page("Root", "Root body text for delay test.", &[]);
+
+    let mock_robots = server
+        .mock("GET", "/robots.txt")
+        .with_status(200)
+        .with_header("Content-Type", "text/plain")
+        .with_body(robots_body)
+        .create();
+    let mock_root = server
+        .mock("GET", "/")
+        .with_status(200)
+        .with_header("Content-Type", "text/html; charset=utf-8")
+        .with_body(root_html)
+        .create();
+
+    // With depth 0 there's only one page, so the crawl delay never fires.
+    let output = mdget()
+        .args([
+            "-t",
+            "5",
+            "--retries",
+            "0",
+            "crawl",
+            "--delay",
+            "0",
+            "--depth",
+            "0",
+            &server.url(),
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "crawl should succeed; stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("Root body text for delay test"),
+        "root page should be fetched: {stdout}"
+    );
+
+    // The robots.txt crawl-delay should be reported in stderr progress output.
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("crawl-delay"),
+        "crawl-delay from robots.txt should be reported; stderr: {stderr}"
+    );
+
+    mock_robots.assert();
+    mock_root.assert();
+}
+
+// ---------------------------------------------------------------------------
+// 60. sitemap_discovery
+// ---------------------------------------------------------------------------
+#[test]
+fn sitemap_discovery() {
+    let mut server = Server::new();
+
+    let page1_url = format!("{}/page1", server.url());
+    let page2_url = format!("{}/page2", server.url());
+
+    let sitemap_xml = format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>{page1_url}</loc></url>
+  <url><loc>{page2_url}</loc></url>
+</urlset>"#
+    );
+
+    let page1_html = crawl_page("Sitemap Page One", "Sitemap page one content.", &[]);
+    let page2_html = crawl_page("Sitemap Page Two", "Sitemap page two content.", &[]);
+
+    let mock_robots = server.mock("GET", "/robots.txt").with_status(404).create();
+    let mock_sitemap = server
+        .mock("GET", "/sitemap.xml")
+        .with_status(200)
+        .with_header("Content-Type", "application/xml")
+        .with_body(sitemap_xml)
+        .create();
+    let mock_root = server
+        .mock("GET", "/")
+        .with_status(200)
+        .with_header("Content-Type", "text/html; charset=utf-8")
+        .with_body(crawl_page("Root", "Root body.", &[]))
+        .create();
+    let mock_page1 = server
+        .mock("GET", "/page1")
+        .with_status(200)
+        .with_header("Content-Type", "text/html; charset=utf-8")
+        .with_body(page1_html)
+        .create();
+    let mock_page2 = server
+        .mock("GET", "/page2")
+        .with_status(200)
+        .with_header("Content-Type", "text/html; charset=utf-8")
+        .with_body(page2_html)
+        .create();
+
+    let output = mdget()
+        .args([
+            "-t",
+            "5",
+            "--retries",
+            "0",
+            "crawl",
+            "--delay",
+            "0",
+            "--depth",
+            "0",
+            "--sitemap",
+            &server.url(),
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "crawl should succeed; stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("Sitemap page one content"),
+        "sitemap page 1 should be in output: {stdout}"
+    );
+    assert!(
+        stdout.contains("Sitemap page two content"),
+        "sitemap page 2 should be in output: {stdout}"
+    );
+
+    mock_robots.assert();
+    mock_sitemap.assert();
+    mock_root.assert();
+    mock_page1.assert();
+    mock_page2.assert();
+}
+
+// ---------------------------------------------------------------------------
+// 61. sitemap_index_nested
+// ---------------------------------------------------------------------------
+#[test]
+fn sitemap_index_nested() {
+    let mut server = Server::new();
+
+    let child_sitemap_url = format!("{}/sitemap-pages.xml", server.url());
+    let article_url = format!("{}/article", server.url());
+
+    let sitemap_index_xml = format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <sitemap><loc>{child_sitemap_url}</loc></sitemap>
+</sitemapindex>"#
+    );
+
+    let child_sitemap_xml = format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>{article_url}</loc></url>
+</urlset>"#
+    );
+
+    let article_html = crawl_page(
+        "Nested Sitemap Article",
+        "Nested sitemap article content.",
+        &[],
+    );
+
+    let mock_robots = server.mock("GET", "/robots.txt").with_status(404).create();
+    let mock_sitemap = server
+        .mock("GET", "/sitemap.xml")
+        .with_status(200)
+        .with_header("Content-Type", "application/xml")
+        .with_body(sitemap_index_xml)
+        .create();
+    let mock_child_sitemap = server
+        .mock("GET", "/sitemap-pages.xml")
+        .with_status(200)
+        .with_header("Content-Type", "application/xml")
+        .with_body(child_sitemap_xml)
+        .create();
+    let mock_root = server
+        .mock("GET", "/")
+        .with_status(200)
+        .with_header("Content-Type", "text/html; charset=utf-8")
+        .with_body(crawl_page("Root", "Root body.", &[]))
+        .create();
+    let mock_article = server
+        .mock("GET", "/article")
+        .with_status(200)
+        .with_header("Content-Type", "text/html; charset=utf-8")
+        .with_body(article_html)
+        .create();
+
+    let output = mdget()
+        .args([
+            "-t",
+            "5",
+            "--retries",
+            "0",
+            "crawl",
+            "--delay",
+            "0",
+            "--depth",
+            "0",
+            "--sitemap",
+            &server.url(),
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "crawl should succeed; stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("Nested sitemap article content"),
+        "article from nested sitemap should be in output: {stdout}"
+    );
+
+    mock_robots.assert();
+    mock_sitemap.assert();
+    mock_child_sitemap.assert();
+    mock_root.assert();
+    mock_article.assert();
+}
