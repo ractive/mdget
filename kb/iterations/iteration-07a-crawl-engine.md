@@ -15,7 +15,7 @@ Add a `crawl` subcommand that fetches multiple pages from a domain, following li
 
 ## CLI Interface
 
-```
+```shell
 mdget crawl https://docs.example.com              # crawl with defaults
 mdget crawl --depth 2 https://docs.example.com    # follow links 2 levels deep
 mdget crawl --delay 2 https://docs.example.com    # 2 seconds between requests
@@ -67,7 +67,7 @@ Crawl mode **always emits metadata frontmatter** per page, regardless of `--incl
 ### `--output-dir` path structure
 
 Mirrors the URL path on disk:
-```
+```text
 output-dir/
   path/to/page.md
   docs/getting-started.md
@@ -77,7 +77,7 @@ output-dir/
 Index pages (`/path/` or `/path`) become `path/index.md`.
 
 **With `--follow-external`**, the hostname is prefixed to avoid path collisions across domains:
-```
+```text
 output-dir/
   docs.example.com/getting-started.md
   blog.example.com/post/hello.md

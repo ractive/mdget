@@ -23,8 +23,6 @@ pub struct CrawlOptions {
     pub follow_external: bool,
     /// If true, strip images from the extracted markdown.
     pub no_images: bool,
-    /// If true, include YAML frontmatter metadata in each result.
-    pub include_metadata: bool,
 }
 
 impl Default for CrawlOptions {
@@ -37,7 +35,6 @@ impl Default for CrawlOptions {
             delay: Duration::from_secs(1),
             follow_external: false,
             no_images: false,
-            include_metadata: false,
         }
     }
 }
@@ -98,7 +95,7 @@ where
         anyhow::bail!("unsupported URL scheme '{scheme}' — only http and https are supported");
     }
 
-    let start_host = start
+    let mut start_host = start
         .host_str()
         .with_context(|| format!("start URL has no host: {start_url}"))?
         .to_lowercase();
@@ -130,8 +127,7 @@ where
             fetched: results.len(),
         });
 
-        // Delay before every request (even the first — keeps it simple and avoids
-        // hammering a server on the very first page when re-crawling).
+        // Delay between requests (skipped for the first page for faster startup).
         if !options.delay.is_zero() && !results.is_empty() {
             std::thread::sleep(options.delay);
         }
@@ -150,6 +146,19 @@ where
 
         let raw_html = &fetch_result.body;
         let final_url = &fetch_result.final_url;
+
+        // Add the final URL to visited too, in case it differs from the requested URL
+        // (e.g., after a redirect). Prevents fetching the same page twice.
+        let final_norm = normalize_url(final_url);
+        visited.insert(final_norm);
+
+        // After a redirect, update the host filter to use the final destination's host.
+        // This handles cases like example.com → www.example.com.
+        if results.is_empty()
+            && let Some(host) = final_url.host_str()
+        {
+            start_host = host.to_lowercase();
+        }
 
         // Extract links from the raw HTML before readability strips navigation.
         if depth < options.max_depth {
@@ -171,7 +180,7 @@ where
                 // Check that adding this to the queue won't push us way beyond max_pages.
                 // We allow the queue to grow a bit (we check max_pages at dequeue time),
                 // but cap the queue to avoid unbounded memory growth.
-                if visited.len() >= options.max_pages * 4 {
+                if visited.len() >= options.max_pages.saturating_mul(4) {
                     break;
                 }
 
@@ -199,17 +208,16 @@ where
         };
 
         let wc = word_count(&markdown);
-        let title = extract_result.title.clone();
 
         on_page(&CrawlProgress::Fetched {
             url: url.to_string(),
-            title: title.clone(),
+            title: extract_result.title.clone(),
         });
 
         results.push(CrawlResult {
             url: final_url.clone(), // clone needed: final_url is borrowed from fetch_result
             markdown,
-            title,
+            title: extract_result.title,
             metadata: extract_result.metadata,
             depth,
             word_count: wc,

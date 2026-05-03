@@ -2218,32 +2218,68 @@ fn crawl_quiet_suppresses_progress() {
 // ---------------------------------------------------------------------------
 // 56. crawl_follow_external
 // ---------------------------------------------------------------------------
+// The previous version of this test used two local mockito servers that both
+// bind to 127.0.0.1. Because host_str() doesn't include the port, both are
+// treated as same-host by the crawler, making the test pass even without
+// --follow-external. This rewrite uses a real external hostname to properly
+// exercise the flag.
 #[test]
 fn crawl_follow_external() {
     let mut server1 = Server::new();
-    let mut server2 = Server::new();
 
-    let external_url = format!("{}/ext-page", server2.url());
-    let root_html = crawl_page("Root", "Root body.", &[&external_url]);
-    let ext_html = crawl_page("External Page", "External body.", &[]);
+    // Link to an external host — unreachable in tests, but that's fine:
+    // we're testing whether the crawler *attempts* it with --follow-external.
+    let root_html = crawl_page("Root", "Root body.", &["https://external.example.com/page"]);
 
-    let mock_root = server1
+    // WITHOUT --follow-external: root is served once; external link is skipped.
+    let mock_root_no_follow = server1
         .mock("GET", "/")
         .with_status(200)
         .with_header("Content-Type", "text/html; charset=utf-8")
-        .with_body(root_html)
-        .create();
-    let mock_ext = server2
-        .mock("GET", "/ext-page")
-        .with_status(200)
-        .with_header("Content-Type", "text/html; charset=utf-8")
-        .with_body(ext_html)
+        .with_body(root_html.clone())
         .create();
 
     let output = mdget()
         .args([
             "-t",
             "5",
+            "--retries",
+            "0",
+            "crawl",
+            "--delay",
+            "0",
+            &server1.url(),
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "crawl without --follow-external should succeed; stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let source_count = stdout.matches("source:").count();
+    assert_eq!(
+        source_count, 1,
+        "without --follow-external, only root should be crawled (got {source_count})"
+    );
+    mock_root_no_follow.assert();
+
+    // WITH --follow-external: crawler attempts the external URL.
+    // The fetch will fail (external.example.com is not a mock), but the root
+    // still succeeds and the external URL should appear in stderr progress output.
+    let mock_root_follow = server1
+        .mock("GET", "/")
+        .with_status(200)
+        .with_header("Content-Type", "text/html; charset=utf-8")
+        .with_body(root_html)
+        .create();
+
+    let output2 = mdget()
+        .args([
+            "-t",
+            "2",
             "--retries",
             "0",
             "crawl",
@@ -2256,18 +2292,14 @@ fn crawl_follow_external() {
         .unwrap();
 
     assert!(
-        output.status.success(),
-        "crawl with --follow-external should succeed; stderr: {}",
-        String::from_utf8_lossy(&output.stderr)
+        output2.status.success(),
+        "crawl with --follow-external should succeed even if external fetch fails; stderr: {}",
+        String::from_utf8_lossy(&output2.stderr)
     );
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let source_count = stdout.matches("source:").count();
+    let stderr2 = String::from_utf8_lossy(&output2.stderr);
     assert!(
-        source_count >= 2,
-        "expected frontmatter for both pages with --follow-external, got {source_count}: {stdout}"
+        stderr2.contains("external.example.com"),
+        "with --follow-external, the external URL should appear in progress output; stderr: {stderr2}"
     );
-
-    mock_root.assert();
-    mock_ext.assert();
+    mock_root_follow.assert();
 }

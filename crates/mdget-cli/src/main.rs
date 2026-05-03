@@ -222,7 +222,7 @@ enum Command {
         output_dir: Option<String>,
 
         /// Auto-generate filename per page in current directory
-        #[arg(short = 'O', long = "auto-filename")]
+        #[arg(short = 'O', long = "auto-filename", conflicts_with = "output_dir")]
         auto_filename: bool,
     },
     /// Start MCP (Model Context Protocol) server on stdio
@@ -337,11 +337,12 @@ fn url_to_output_path(url: &url::Url, output_dir: &str, include_host: bool) -> P
         return path;
     }
 
-    // Split on '/' and push each non-empty segment.
+    // Split on '/' and push each non-empty, non-traversal segment.
+    // Filter '.' and '..' to prevent path traversal outside the output directory.
     let segments: Vec<&str> = url_path
         .trim_matches('/')
         .split('/')
-        .filter(|s| !s.is_empty())
+        .filter(|s| !s.is_empty() && *s != "." && *s != "..")
         .collect();
 
     if segments.is_empty() {
@@ -396,15 +397,16 @@ fn run_crawl(
         delay: Duration::from_secs(delay),
         follow_external,
         no_images: cli.no_images,
-        include_metadata: cli.include_metadata,
     };
 
     let quiet = cli.quiet;
     let results = mdget_core::crawl(start_url, &options, |progress| {
-        if quiet {
-            return;
-        }
         match progress {
+            mdget_core::CrawlProgress::Error { url, error } => {
+                // Always show errors, even in quiet mode.
+                eprintln!("  \u{2717} Error: {url} ({error})");
+            }
+            _ if quiet => {}
             mdget_core::CrawlProgress::Fetching {
                 url,
                 depth: d,
@@ -426,9 +428,6 @@ fn run_crawl(
             mdget_core::CrawlProgress::Skipped { url, reason } => {
                 eprintln!("  \u{26a0} Skipped: {url} ({reason})");
             }
-            mdget_core::CrawlProgress::Error { url, error } => {
-                eprintln!("  \u{2717} Error: {url} ({error})");
-            }
             mdget_core::CrawlProgress::Done { total } => {
                 eprintln!("Crawl complete: {total} pages fetched");
             }
@@ -442,12 +441,12 @@ fn run_crawl(
             result.url.as_str(),
             result.word_count,
         );
-        let body = if result.markdown.ends_with('\n') {
-            result.markdown.clone() // clone needed: must be an owned String to format with frontmatter
+        let newline = if result.markdown.ends_with('\n') {
+            ""
         } else {
-            format!("{}\n", result.markdown)
+            "\n"
         };
-        let page_content = format!("{frontmatter}\n{body}");
+        let page_content = format!("{frontmatter}\n{}{newline}", result.markdown);
 
         if let Some(dir) = output_dir {
             let out_path = url_to_output_path(&result.url, dir, follow_external);

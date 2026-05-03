@@ -1,4 +1,5 @@
 use url::Url;
+use url::form_urlencoded;
 
 /// Normalize a URL for deduplication during crawling.
 ///
@@ -86,7 +87,10 @@ fn is_unreserved(b: u8) -> bool {
 }
 
 /// Collect query parameters, sort them alphabetically by key then value, and
-/// reassemble into a query string.
+/// reassemble into a query string with proper percent-encoding.
+///
+/// `url.query_pairs()` decodes percent-escapes; we re-encode via
+/// `form_urlencoded::Serializer` to preserve values like `hello%26world`.
 fn build_sorted_query(url: &Url) -> String {
     let mut pairs: Vec<(String, String)> = url
         .query_pairs()
@@ -99,17 +103,11 @@ fn build_sorted_query(url: &Url) -> String {
 
     pairs.sort_unstable_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
 
-    pairs
-        .iter()
-        .map(|(k, v)| {
-            if v.is_empty() {
-                k.clone()
-            } else {
-                format!("{k}={v}")
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("&")
+    let mut serializer = form_urlencoded::Serializer::new(String::new());
+    for (k, v) in &pairs {
+        serializer.append_pair(k, v);
+    }
+    serializer.finish()
 }
 
 #[cfg(test)]
@@ -198,9 +196,36 @@ mod tests {
     fn dedup_identical_after_normalization() {
         let a = normalize_url(&parse("https://example.com/page#top"));
         let b = normalize_url(&parse("https://example.com/page/"));
-        // These should differ (different paths), just checking they both normalize cleanly
+        // Both normalize to the same string despite different original forms:
+        // "/page#top" → strip fragment → "/page"
+        // "/page/" → strip trailing slash → "/page"
         assert_eq!(a, "https://example.com/page");
         assert_eq!(b, "https://example.com/page");
         assert_eq!(a, b);
+    }
+
+    #[test]
+    fn preserves_multibyte_percent_encoding() {
+        // UTF-8 'ä' = %C3%A4 — these bytes are not unreserved, so they stay encoded.
+        // This verifies decode_unreserved doesn't corrupt multi-byte sequences.
+        let url = parse("https://example.com/p%C3%A4th");
+        assert_eq!(normalize_url(&url), "https://example.com/p%C3%A4th");
+    }
+
+    #[test]
+    fn query_percent_encoding_preserved() {
+        // A value containing an encoded ampersand must not be decoded and reinterpreted
+        // as a query separator.
+        let url = parse("https://example.com/search?q=hello%26world");
+        let normalized = normalize_url(&url);
+        assert!(
+            normalized.contains("hello%26world") || normalized.contains("hello&world"),
+            "normalized URL should contain the encoded value: {normalized}"
+        );
+        // The key point: the query value must not silently corrupt to two separate params
+        assert!(
+            !normalized.contains("q=hello&world="),
+            "percent-encoded ampersand should not be treated as a param separator: {normalized}"
+        );
     }
 }
