@@ -67,14 +67,13 @@ This iteration is significantly larger than previous ones. Consider splitting:
 - **7a**: Core crawl engine — BFS, depth limit, same-domain, dedup, rate limiting, `--output-dir`, progress reporting
 - **7b**: robots.txt parsing, sitemap.xml discovery (adds external crate deps)
 
-### MCP crawl tool
+### MCP crawl tool (resolved)
 
-Crawling is long-running — MCP's request/response model isn't a natural fit. Options:
-- Use MCP progress notifications (supported by `rmcp`) to stream status updates
-- Return a summary with page list + errors rather than streaming content
-- Defer MCP crawl tool entirely and let agents use the CLI via shell
+Crawling is long-running — MCP's request/response model isn't a natural fit. [[iteration-06-mcp-server|Iteration 6]] showed that `batch_fetch` works well for bounded parallel work (capped at 50 URLs, `std::thread::scope`), but crawling involves unbounded page counts and sequential link discovery which doesn't map cleanly to a single MCP tool call.
 
-Decision deferred until after [[iteration-06-mcp-server|iteration 6 (MCP server)]] is implemented and we understand the MCP integration patterns better.
+**Decision**: Defer MCP crawl tool to a future iteration. Agents can use the CLI via shell (`mdget crawl ...`). If added later, the MCP tool should return a summary (pages found, errors) rather than streaming full content, and enforce strict `--max-pages` limits.
+
+Patterns to reuse from iter-6: `validate_url` (with credential rejection), bounded concurrency, `block_in_place` for blocking I/O on tokio workers.
 
 ### robots.txt crate selection
 
