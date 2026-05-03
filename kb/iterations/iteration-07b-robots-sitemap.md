@@ -7,7 +7,7 @@ tags:
   - crawling
   - robots
   - sitemap
-status: in-progress
+status: completed
 branch: iter-7b/robots-sitemap
 ---
 
