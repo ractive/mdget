@@ -2,8 +2,10 @@
 title: mdget Roadmap
 type: project
 date: 2026-04-17
-tags: [roadmap, planning]
-status: in-progress
+tags:
+  - roadmap
+  - planning
+status: completed
 ---
 
 ## Roadmap
@@ -12,7 +14,7 @@ High-level plan for mdget iterations beyond the initial project setup.
 
 ### Iteration 2 — Core fetch: URL → Markdown CLI
 
-See [[iterations/iteration-02-core-fetch]].
+See [[iterations/done/iteration-02-core-fetch]].
 
 Single URL fetch with readability extraction, markdown output, file saving, auto-filename generation. Blocking HTTP, no concurrency.
 

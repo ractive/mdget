@@ -4,7 +4,7 @@ type: iteration
 date: 2026-05-03
 tags:
   - iteration
-  - crawling
+  - crawl
 status: completed
 branch: iter-7a/crawl-engine
 ---
@@ -33,7 +33,7 @@ mdget crawl --output-dir ./docs https://docs.example.com  # output to directory
 | Max pages | 20 | `--max-pages N` |
 | Stay on same host | yes | `--follow-external` to override |
 
-Note: robots.txt and sitemap support deferred to [[iteration-07b-robots-sitemap]].
+Note: robots.txt and sitemap support deferred to [[iterations/done/iteration-07b-robots-sitemap]].
 
 ## Tasks
 

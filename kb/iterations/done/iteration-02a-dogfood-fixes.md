@@ -57,7 +57,7 @@ Output doesn't consistently end with a newline before the shell prompt. This is 
 
 ## Additional feature: `--metadata-only` / `-m`
 
-Add to [[iteration-04-output-control]]:
+Add to [[iterations/done/iteration-04-output-control]]:
 
 ```bash
 mdget <URL> --metadata-only        # print only YAML frontmatter, skip body

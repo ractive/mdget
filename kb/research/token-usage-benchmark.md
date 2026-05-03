@@ -2,8 +2,13 @@
 title: "Benchmark: mdget vs WebFetch token usage & speed"
 type: research
 date: 2026-05-03
-tags: [benchmark, dogfood, token-usage, mcp, cli]
-status: planned
+tags:
+  - benchmark
+  - dogfood
+  - token-usage
+  - mcp
+  - cli
+status: completed
 ---
 
 ## Goal

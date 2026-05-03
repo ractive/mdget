@@ -56,11 +56,11 @@ Fields are included only when available from the page. `title`, `source`, `fetch
 
 ## Design Decisions
 
-- **`--metadata-only` for triage**: Agents often need to triage a list of URLs before deciding which to read fully. Printing just the frontmatter (title, word count, excerpt) lets them decide cheaply. Still requires a full fetch (readability needs the DOM), but skips markdown serialization and saves output tokens. Idea surfaced in [[iteration-02a-dogfood-fixes]] dogfood review.
+- **`--metadata-only` for triage**: Agents often need to triage a list of URLs before deciding which to read fully. Printing just the frontmatter (title, word count, excerpt) lets them decide cheaply. Still requires a full fetch (readability needs the DOM), but skips markdown serialization and saves output tokens. Idea surfaced in [[iterations/done/iteration-02a-dogfood-fixes]] dogfood review.
 - **Links always included**: hyperlinks are valuable context for LLMs (source attribution, navigation). No flag to strip them.
 - **Images are noise for LLMs**: LLMs can't see images, so `![alt](url)` references waste tokens. `--no-images` strips them cleanly.
 - **Truncation is character-based**: token counting is model-specific and adds complexity. Characters are universal and predictable. Users can estimate tokens from character count.
 
 ## Deferred: readability tuning flags
 
-dom_smoothie exposes config options (`char_threshold`, `candidate_select_mode`, `max_elements_to_parse`) that could theoretically improve extraction on edge-case pages. However, these are deep engine internals — if extraction fails, `--raw` is the pragmatic escape hatch. Adding niche flags would clutter the CLI for negligible benefit. Revisit only if users report specific extraction failures where these knobs would help. See [[dom-query-escaping]] for full research.
+dom_smoothie exposes config options (`char_threshold`, `candidate_select_mode`, `max_elements_to_parse`) that could theoretically improve extraction on edge-case pages. However, these are deep engine internals — if extraction fails, `--raw` is the pragmatic escape hatch. Adding niche flags would clutter the CLI for negligible benefit. Revisit only if users report specific extraction failures where these knobs would help. See [[research/dom-query-escaping]] for full research.

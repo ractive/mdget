@@ -2,12 +2,18 @@
 title: "Benchmark results: mdget vs WebFetch (2026-05-03)"
 type: research
 date: 2026-05-03
-tags: [benchmark, results, token-usage, mcp, cli]
+tags:
+  - benchmark
+  - results
+  - token-usage
+  - mcp
+  - cli
+status: completed
 ---
 
 ## Overview
 
-Three benchmark runs comparing four web content retrieval approaches for a multi-page research task (Turborepo docs). See [[token-usage-benchmark]] for the test setup.
+Three benchmark runs comparing four web content retrieval approaches for a multi-page research task (Turborepo docs). See [[research/token-usage-benchmark]] for the test setup.
 
 ## Task
 

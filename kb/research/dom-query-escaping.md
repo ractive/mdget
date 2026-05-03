@@ -2,7 +2,13 @@
 title: "dom_query markdown escaping: root cause & options"
 type: research
 date: 2026-04-20
-tags: [dom_query, dom_smoothie, escaping, markdown, quality]
+tags:
+  - dom_query
+  - dom_smoothie
+  - escaping
+  - markdown
+  - quality
+status: completed
 ---
 
 ## Problem
@@ -72,4 +78,4 @@ Investigated all `dom_smoothie::Config` fields. Most are irrelevant (HTML-only, 
 | `char_threshold` | `--char-threshold` | Controls the "sieve" — if extracted text is shorter than this (default 500), retries with looser heuristics. Lower for short pages. |
 | `max_elements_to_parse` | `--max-elements` | Safety limit on DOM size. Default 0 (unlimited). |
 
-See [[iteration-04-output-control]] for implementation plan.
+See [[iterations/done/iteration-04-output-control]] for implementation plan.

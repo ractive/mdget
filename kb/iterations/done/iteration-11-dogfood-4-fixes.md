@@ -14,7 +14,7 @@ branch: iter-11/dogfood-4-fixes
 
 ## Goal
 
-Address issues found in [[iteration-10-dogfood-review|dogfood review #4]]. The P1 is adding `max_length` to the MCP `crawl_site` tool to prevent context window blowouts. P2s improve content detection (RSS feeds, smarter excerpt fallback). P3s are CLI polish.
+Address issues found in [[iterations/done/iteration-10-dogfood-review|dogfood review #4]]. The P1 is adding `max_length` to the MCP `crawl_site` tool to prevent context window blowouts. P2s improve content detection (RSS feeds, smarter excerpt fallback). P3s are CLI polish.
 
 ## Tasks
 

@@ -2,8 +2,12 @@
 title: "Post-process output cleanup: table quality & wiki artifacts"
 type: iteration
 date: 2026-04-20
-tags: [iteration, quality, post-processing, dogfood]
-status: in-progress
+tags:
+  - iteration
+  - quality
+  - post-processing
+  - dogfood
+status: completed
 branch: iter-2b/output-cleanup
 ---
 

@@ -2,7 +2,10 @@
 title: Decision Log
 type: reference
 date: 2026-04-20
-tags: [decisions, architecture]
+tags:
+  - decisions
+  - architecture
+status: completed
 ---
 
 ## 2026-04-20: Keep hand-rolled escape cleanup (no markdown roundtrip library)
@@ -19,4 +22,4 @@ tags: [decisions, architecture]
 
 **Revisit if:** dom_query changes its escape behavior significantly, or we need general-purpose markdown normalization beyond escape cleanup.
 
-See [[dom-query-escaping]] for full research.
+See [[research/dom-query-escaping]] for full research.

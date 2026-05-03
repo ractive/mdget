@@ -14,7 +14,7 @@ branch: iter-9/dogfood-fixes
 
 ## Goal
 
-Fix all actionable issues found in [[iteration-08-dogfood-review]] (dogfood review #3). No new features — only fixes for bugs and rough edges discovered during hands-on testing of CLI and MCP server.
+Fix all actionable issues found in [[iterations/done/iteration-08-dogfood-review]] (dogfood review #3). No new features — only fixes for bugs and rough edges discovered during hands-on testing of CLI and MCP server.
 
 ## Tasks
 

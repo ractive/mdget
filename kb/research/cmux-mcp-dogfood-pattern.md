@@ -2,7 +2,12 @@
 title: "Pattern: Launch Claude Code with MCP server via cmux"
 type: research
 date: 2026-05-03
-tags: [cmux, mcp, dogfood, pattern]
+tags:
+  - cmux
+  - mcp
+  - dogfood
+  - pattern
+status: completed
 ---
 
 ## Problem

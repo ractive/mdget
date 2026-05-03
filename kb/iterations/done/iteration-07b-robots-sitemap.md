@@ -4,16 +4,16 @@ type: iteration
 date: 2026-05-03
 tags:
   - iteration
-  - crawling
   - robots
   - sitemap
+  - crawl
 status: completed
 branch: iter-7b/robots-sitemap
 ---
 
 ## Goal
 
-Layer robots.txt compliance and sitemap.xml discovery onto the crawl engine from [[iteration-07a-crawl-engine]]. After this, `mdget crawl` is a responsible, well-behaved crawler.
+Layer robots.txt compliance and sitemap.xml discovery onto the crawl engine from [[iterations/done/iteration-07a-crawl-engine]]. After this, `mdget crawl` is a responsible, well-behaved crawler.
 
 ## CLI Interface (additions)
 

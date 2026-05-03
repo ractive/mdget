@@ -1,1 +1,84 @@
 dir = "kb"
+
+[schema]
+validate_on_write = true
+
+[schema.types]
+
+[schema.types.iteration]
+required = ["title", "date", "status", "tags"]
+filename-template = "iterations/iteration-{n}-{slug}.md"
+
+[schema.types.iteration.defaults]
+status = "planned"
+
+[schema.types.iteration.properties]
+
+[schema.types.iteration.properties.status]
+type = "enum"
+values = ["planned", "in-progress", "completed", "superseded"]
+
+[schema.types.iteration.properties.date]
+type = "date"
+
+[schema.types.iteration.properties.branch]
+type = "string"
+
+[schema.types.iteration.properties.title]
+type = "string"
+
+[schema.types.iteration.properties.tags]
+type = "list"
+
+[schema.types.research]
+required = ["title", "date", "status", "tags"]
+
+[schema.types.research.defaults]
+status = "planned"
+
+[schema.types.research.properties]
+
+[schema.types.research.properties.status]
+type = "enum"
+values = ["planned", "in-progress", "completed"]
+
+[schema.types.research.properties.date]
+type = "date"
+
+[schema.types.research.properties.title]
+type = "string"
+
+[schema.types.research.properties.tags]
+type = "list"
+
+[schema.types.reference]
+required = ["title", "date"]
+
+[schema.types.reference.defaults]
+status = "completed"
+
+[schema.types.reference.properties]
+
+[schema.types.reference.properties.date]
+type = "date"
+
+[schema.types.reference.properties.title]
+type = "string"
+
+[schema.types.planning]
+required = ["title", "date", "status"]
+
+[schema.types.planning.defaults]
+status = "planned"
+
+[schema.types.planning.properties]
+
+[schema.types.planning.properties.status]
+type = "enum"
+values = ["planned", "in-progress", "completed", "superseded"]
+
+[schema.types.planning.properties.date]
+type = "date"
+
+[schema.types.planning.properties.title]
+type = "string"
