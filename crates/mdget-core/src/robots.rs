@@ -1,8 +1,12 @@
 use std::collections::HashMap;
+use std::io::Read as _;
 use std::time::Duration;
 
 use texting_robots::Robot;
 use url::Url;
+
+/// Maximum size for robots.txt (1 MB).
+const MAX_ROBOTS_SIZE: usize = 1024 * 1024;
 
 /// Cached robots.txt data for domains already looked up.
 ///
@@ -97,8 +101,15 @@ fn fetch_robots(client: &reqwest::blocking::Client, url: &Url, user_agent: &str)
         return None;
     }
 
-    let bytes = response.bytes().ok()?;
+    let mut body_bytes = Vec::new();
+    response
+        .take(MAX_ROBOTS_SIZE as u64 + 1)
+        .read_to_end(&mut body_bytes)
+        .ok()?;
+    if body_bytes.len() > MAX_ROBOTS_SIZE {
+        return None;
+    }
 
     // texting_robots::Robot::new returns anyhow::Result.
-    Robot::new(user_agent, &bytes).ok()
+    Robot::new(user_agent, &body_bytes).ok()
 }

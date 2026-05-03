@@ -32,6 +32,8 @@ mdget crawl <URL>                  # crawl site, following links (depth 1, max 2
 mdget crawl --depth 2 <URL>        # follow links 2 levels deep
 mdget crawl --output-dir ./docs <URL>  # save each page as a separate file
 mdget crawl --max-pages 50 <URL>   # increase page limit
+mdget crawl --sitemap <URL>        # seed crawl queue from sitemap.xml
+mdget crawl --ignore-robots <URL>  # skip robots.txt restrictions
 mdget serve                        # start MCP server on stdio
 mdget -V                           # print version
 ```
@@ -63,6 +65,8 @@ mdget -V                           # print version
 | `--follow-external` |       |         | Follow links to other hosts                      |
 | `--output-dir <DIR>`|       |         | Save each page as a file (mirrors URL path)      |
 | `--auto-filename`   | `-O`  |         | Auto-generate filename per page                  |
+| `--ignore-robots`   |       |         | Ignore robots.txt restrictions                   |
+| `--sitemap`         |       |         | Seed crawl queue from sitemap.xml                |
 
 ## stdout/stderr Contract
 
