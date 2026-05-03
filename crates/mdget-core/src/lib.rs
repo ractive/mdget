@@ -4,6 +4,8 @@ mod fetch;
 mod filename;
 mod links;
 mod normalize;
+pub(crate) mod robots;
+pub(crate) mod sitemap;
 
 pub use crawl::{CrawlOptions, CrawlProgress, CrawlResult, crawl};
 pub use extract::{

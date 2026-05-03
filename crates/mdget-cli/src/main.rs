@@ -188,13 +188,24 @@ enum Command {
         long_about = "Crawl a website breadth-first, following links up to a configurable depth.\n\n\
             Each discovered page is fetched, converted to clean markdown, and output\n\
             to stdout or saved to individual files.\n\n\
+            ROBOTS.TXT:\n    \
+            By default, mdget respects robots.txt. The crawl delay from robots.txt is\n    \
+            used if it is higher than the configured --delay. Use --ignore-robots to\n    \
+            bypass robots.txt restrictions entirely.\n\n\
+            SITEMAP:\n    \
+            With --sitemap, mdget fetches sitemap.xml from the start URL domain and\n    \
+            seeds the crawl queue with all discovered URLs. Supports both <urlset>\n    \
+            and nested <sitemapindex> formats. Combine with --depth 0 to fetch only\n    \
+            sitemap URLs without following any additional links.\n\n\
             EXAMPLES:\n    \
             mdget crawl https://docs.example.com              # crawl with defaults\n    \
             mdget crawl --depth 2 https://docs.example.com    # follow links 2 levels deep\n    \
             mdget crawl --delay 2 https://docs.example.com    # 2 seconds between requests\n    \
             mdget crawl --max-pages 50 https://docs.example.com\n    \
             mdget crawl -O https://docs.example.com           # auto-generate filenames\n    \
-            mdget crawl --output-dir ./docs https://docs.example.com  # save to directory"
+            mdget crawl --output-dir ./docs https://docs.example.com  # save to directory\n    \
+            mdget crawl --sitemap --depth 0 https://docs.example.com  # sitemap URLs + start page\n    \
+            mdget crawl --ignore-robots https://docs.example.com      # skip robots.txt"
     )]
     Crawl {
         /// Starting URL to crawl from
@@ -224,6 +235,14 @@ enum Command {
         /// Auto-generate filename per page in current directory
         #[arg(short = 'O', long = "auto-filename", conflicts_with = "output_dir")]
         auto_filename: bool,
+
+        /// Ignore robots.txt restrictions
+        #[arg(long = "ignore-robots")]
+        ignore_robots: bool,
+
+        /// Discover pages via sitemap.xml and add to crawl queue
+        #[arg(long)]
+        sitemap: bool,
     },
     /// Start MCP (Model Context Protocol) server on stdio
     #[command(long_about = "Start an MCP server on stdio transport.\n\n\
@@ -277,6 +296,8 @@ fn main() -> anyhow::Result<()> {
             follow_external,
             output_dir,
             auto_filename,
+            ignore_robots,
+            sitemap,
         }) => run_crawl(
             url,
             &cli,
@@ -286,6 +307,8 @@ fn main() -> anyhow::Result<()> {
             *follow_external,
             output_dir.as_deref(),
             *auto_filename,
+            *ignore_robots,
+            *sitemap,
         ),
         Some(Command::Serve) => run_serve(),
         Some(Command::Init { claude, global }) => {
@@ -373,7 +396,7 @@ fn url_to_output_path(url: &url::Url, output_dir: &str, include_host: bool) -> P
     path
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::fn_params_excessive_bools)]
 fn run_crawl(
     start_url: &str,
     cli: &Cli,
@@ -383,6 +406,8 @@ fn run_crawl(
     follow_external: bool,
     output_dir: Option<&str>,
     auto_filename: bool,
+    ignore_robots: bool,
+    use_sitemap: bool,
 ) -> anyhow::Result<()> {
     let options = mdget_core::CrawlOptions {
         fetch_options: mdget_core::FetchOptions {
@@ -397,6 +422,8 @@ fn run_crawl(
         delay: Duration::from_secs(delay),
         follow_external,
         no_images: cli.no_images,
+        ignore_robots,
+        use_sitemap,
     };
 
     let quiet = cli.quiet;
@@ -430,6 +457,24 @@ fn run_crawl(
             }
             mdget_core::CrawlProgress::Done { total } => {
                 eprintln!("Crawl complete: {total} pages fetched");
+            }
+            mdget_core::CrawlProgress::RobotsLoaded {
+                domain,
+                delay,
+                found,
+            } => {
+                if *found {
+                    if let Some(d) = delay {
+                        eprintln!("  robots.txt loaded for {domain} (crawl-delay: {d}s)");
+                    } else {
+                        eprintln!("  robots.txt loaded for {domain}");
+                    }
+                } else {
+                    eprintln!("  robots.txt not found for {domain} (allowing all)");
+                }
+            }
+            mdget_core::CrawlProgress::SitemapLoaded { url_count } => {
+                eprintln!("  Sitemap: {url_count} URLs discovered");
             }
         }
     })?;

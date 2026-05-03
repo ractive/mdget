@@ -24,6 +24,8 @@ predicates = "3"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls", "gzip", "brotli", "deflate", "charset"] }
 serde = { version = "1", features = ["derive"] }
 mockito = "1"
+texting_robots = "0.2"
+quick-xml = { version = "0.37", features = ["serialize"] }
 tempfile = "3"
 rmcp = "1.6"
 schemars = "0.8"

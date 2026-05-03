@@ -8,6 +8,7 @@ use crate::extract::{ExtractOptions, Metadata, extract, strip_images, word_count
 use crate::fetch::{FetchOptions, fetch};
 use crate::links::extract_links;
 use crate::normalize::normalize_url;
+use crate::robots::RobotsCache;
 
 /// Options controlling the crawl behaviour.
 pub struct CrawlOptions {
@@ -23,6 +24,10 @@ pub struct CrawlOptions {
     pub follow_external: bool,
     /// If true, strip images from the extracted markdown.
     pub no_images: bool,
+    /// If true, skip robots.txt checking. Default: false.
+    pub ignore_robots: bool,
+    /// If true, fetch sitemap.xml and seed the crawl queue. Default: false.
+    pub use_sitemap: bool,
 }
 
 impl Default for CrawlOptions {
@@ -35,6 +40,8 @@ impl Default for CrawlOptions {
             delay: Duration::from_secs(1),
             follow_external: false,
             no_images: false,
+            ignore_robots: false,
+            use_sitemap: false,
         }
     }
 }
@@ -73,6 +80,14 @@ pub enum CrawlProgress {
     Done {
         total: usize,
     },
+    RobotsLoaded {
+        domain: String,
+        delay: Option<f64>,
+        found: bool,
+    },
+    SitemapLoaded {
+        url_count: usize,
+    },
 }
 
 /// Crawl a website breadth-first starting from `start_url`.
@@ -100,6 +115,58 @@ where
         .with_context(|| format!("start URL has no host: {start_url}"))?
         .to_lowercase();
 
+    let user_agent = options
+        .fetch_options
+        .user_agent
+        .as_deref()
+        .unwrap_or(concat!("mdget/", env!("CARGO_PKG_VERSION")));
+
+    // Build a simple HTTP client for robots.txt and sitemap fetches.
+    // We use a short timeout for these auxiliary fetches — we don't want
+    // robots.txt unavailability to stall the whole crawl.
+    let aux_client = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(options.fetch_options.timeout_secs))
+        .user_agent(user_agent)
+        .build()
+        .context("failed to build auxiliary HTTP client")?;
+
+    // --- robots.txt ---
+    let quiet = options.fetch_options.quiet;
+    let mut robots_cache: Option<RobotsCache> = None;
+    let mut effective_delay = options.delay;
+
+    if !options.ignore_robots {
+        // Use only the product token for robots.txt matching — sites write "User-agent: mdget",
+        // not "User-agent: mdget/0.1.0".
+        let robots_ua = "mdget".to_string();
+        let mut cache = RobotsCache::new(robots_ua);
+        // Pre-warm for the start URL domain.
+        cache.is_allowed(&start, &aux_client);
+
+        let domain = start.host_str().unwrap_or("").to_string();
+        let found = cache.has_robots(&start);
+
+        // Check if the robots.txt specifies a crawl delay higher than configured.
+        if let Some(robots_delay) = cache.crawl_delay(&start) {
+            if robots_delay > options.delay {
+                effective_delay = robots_delay;
+            }
+            on_page(&CrawlProgress::RobotsLoaded {
+                domain,
+                delay: Some(robots_delay.as_secs_f64()),
+                found,
+            });
+        } else {
+            on_page(&CrawlProgress::RobotsLoaded {
+                domain,
+                delay: None,
+                found,
+            });
+        }
+
+        robots_cache = Some(cache);
+    }
+
     // BFS queue: (url, depth).
     let mut queue: VecDeque<(Url, u32)> = VecDeque::new();
     // Visited set keyed on normalized URL strings.
@@ -109,13 +176,56 @@ where
     // Seed the queue with the start URL.
     let start_norm = normalize_url(&start);
     visited.insert(start_norm);
-    queue.push_back((start, 0));
+    // clone needed: start is moved into the queue but still needed for sitemap fetch below
+    queue.push_back((start.clone(), 0));
+
+    // --- sitemap.xml ---
+    if options.use_sitemap {
+        match crate::sitemap::fetch_sitemap_urls(&aux_client, &start, quiet) {
+            Ok(sitemap_urls) => {
+                let count = sitemap_urls.len();
+                on_page(&CrawlProgress::SitemapLoaded { url_count: count });
+
+                for su in sitemap_urls {
+                    // Apply robots check.
+                    if let Some(ref mut cache) = robots_cache
+                        && !cache.is_allowed(&su, &aux_client)
+                    {
+                        continue;
+                    }
+                    let norm = normalize_url(&su);
+                    if visited.contains(&norm) {
+                        continue;
+                    }
+                    visited.insert(norm);
+                    // Add at depth 0 so they are treated as seed pages.
+                    queue.push_back((su, 0));
+                }
+            }
+            Err(e) => {
+                if !quiet {
+                    eprintln!("  Warning: failed to fetch sitemap: {e}");
+                }
+            }
+        }
+    }
 
     while let Some((url, depth)) = queue.pop_front() {
         if results.len() >= options.max_pages {
             on_page(&CrawlProgress::Skipped {
                 url: url.to_string(),
                 reason: format!("max_pages ({}) reached", options.max_pages),
+            });
+            continue;
+        }
+
+        // Check robots.txt before fetching.
+        if let Some(ref mut cache) = robots_cache
+            && !cache.is_allowed(&url, &aux_client)
+        {
+            on_page(&CrawlProgress::Skipped {
+                url: url.to_string(),
+                reason: "blocked by robots.txt".to_string(),
             });
             continue;
         }
@@ -128,8 +238,8 @@ where
         });
 
         // Delay between requests (skipped for the first page for faster startup).
-        if !options.delay.is_zero() && !results.is_empty() {
-            std::thread::sleep(options.delay);
+        if !effective_delay.is_zero() && !results.is_empty() {
+            std::thread::sleep(effective_delay);
         }
 
         // Fetch the page.
@@ -170,6 +280,13 @@ where
                     if link_host != start_host {
                         continue;
                     }
+                }
+
+                // Check robots.txt before queuing.
+                if let Some(ref mut cache) = robots_cache
+                    && !cache.is_allowed(&link, &aux_client)
+                {
+                    continue;
                 }
 
                 let norm = normalize_url(&link);
