@@ -1,0 +1,20 @@
+[package]
+name = "mdget-mcp"
+description = "MCP server for mdget"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+mdget-core = { workspace = true }
+anyhow = { workspace = true }
+rmcp = { workspace = true, features = ["server", "macros", "transport-io"] }
+schemars = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true, features = ["full"] }
+url = { workspace = true }

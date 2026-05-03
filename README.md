@@ -75,6 +75,46 @@ mdget -V                           # print version
 | `--quiet` | `-q` | Suppress progress messages on stderr |
 | `--version` | `-V` | Print version info |
 
+## MCP Server
+
+mdget can run as an MCP (Model Context Protocol) server, allowing AI agents to fetch web content as markdown without shelling out to a CLI.
+
+```sh
+mdget serve    # start MCP server on stdio
+```
+
+### Setup (Claude Code)
+
+Add to your `.claude/settings.json` or `.mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "mdget": { "command": "mdget", "args": ["serve"] }
+  }
+}
+```
+
+### Setup (Claude Desktop)
+
+Add to your `claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "mdget": { "command": "mdget", "args": ["serve"] }
+  }
+}
+```
+
+### Available Tools
+
+| Tool | Description |
+|------|-------------|
+| `fetch_markdown` | Fetch a URL and return clean markdown. Supports `raw`, `include_metadata`, `no_images`, `max_length`, `timeout`, `retries` options. |
+| `fetch_metadata` | Fetch a URL and return only YAML metadata (title, word count, excerpt). Useful for triaging URLs before a full fetch. |
+| `batch_fetch` | Fetch multiple URLs in parallel. Returns an array of results, each with `url`, `title`, and `content` or `error`. |
+
 ## Claude Code Integration
 
 mdget includes built-in Claude Code integration so Claude learns to use mdget for web fetching:

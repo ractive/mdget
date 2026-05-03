@@ -36,12 +36,12 @@ mdget crawl --output-dir ./docs https://docs.example.com  # output to directory
 ## Tasks
 
 - [ ] Add `crawl` subcommand to CLI
-- [ ] Implement link discovery from fetched markdown/HTML
+- [ ] Implement link discovery from raw HTML (before readability — see design decisions)
 - [ ] Implement breadth-first crawl with depth limiting
-- [ ] Parse and respect `robots.txt` (find or build a Rust parser)
+- [ ] Parse and respect `robots.txt` (evaluate `robotstxt` vs `texting_robots` crates)
 - [ ] Implement `--delay` rate limiting between requests
 - [ ] Implement `--max-pages` cap
-- [ ] Implement `--sitemap` for sitemap.xml-based discovery
+- [ ] Implement `--sitemap` for sitemap.xml-based discovery (requires XML dep, e.g. `quick-xml`)
 - [ ] Implement `--output-dir` to write one markdown file per page
 - [ ] Stay on same domain by default, `--follow-external` to allow cross-domain
 - [ ] Progress reporting on stderr (pages fetched, queue size, errors)
@@ -55,3 +55,34 @@ mdget crawl --output-dir ./docs https://docs.example.com  # output to directory
 - **Same-domain only by default**: prevents accidentally crawling the entire internet. `--follow-external` is an explicit opt-in.
 - **Breadth-first**: more predictable than depth-first for bounded crawls. Top-level pages are usually more valuable.
 - **URL normalization**: strip fragments, normalize trailing slashes, decode percent-encoding to avoid duplicate fetches.
+- **Link discovery from raw HTML, not markdown**: readability strips nav/sidebar/footer links which are often the most useful for crawling (table of contents, next/prev page links). The crawl engine needs the full HTML to discover links, then passes each page through readability for the markdown output.
+- **Crawl logic in `mdget-core`**: following the architecture pattern (core = logic, cli/mcp = presentation). The crawl engine API should be designed so that a future `crawl` MCP tool can reuse it.
+- **Stdout output for multi-page crawls**: pages separated by `---` (consistent with existing multi-URL behavior). `--include-metadata` pairs naturally with crawling to identify each page's source URL in the output.
+
+## Open Questions
+
+### Consider splitting into 7a/7b
+
+This iteration is significantly larger than previous ones. Consider splitting:
+- **7a**: Core crawl engine — BFS, depth limit, same-domain, dedup, rate limiting, `--output-dir`, progress reporting
+- **7b**: robots.txt parsing, sitemap.xml discovery (adds external crate deps)
+
+### MCP crawl tool (resolved)
+
+Crawling is long-running — MCP's request/response model isn't a natural fit. [[iteration-06-mcp-server|Iteration 6]] showed that `batch_fetch` works well for bounded parallel work (capped at 50 URLs, `std::thread::scope`), but crawling involves unbounded page counts and sequential link discovery which doesn't map cleanly to a single MCP tool call.
+
+**Decision**: Defer MCP crawl tool to a future iteration. Agents can use the CLI via shell (`mdget crawl ...`). If added later, the MCP tool should return a summary (pages found, errors) rather than streaming full content, and enforce strict `--max-pages` limits.
+
+Patterns to reuse from iter-6: `validate_url` (with credential rejection), bounded concurrency, `block_in_place` for blocking I/O on tokio workers.
+
+### robots.txt crate selection
+
+Main candidates:
+- `robotstxt` — Google's C++ parser ported to Rust, well-tested against real-world edge cases
+- `texting_robots` — pure Rust, more idiomatic API
+
+Evaluate both during implementation for correctness, maintenance status, and dependency footprint.
+
+### Sitemap XML dependency
+
+`--sitemap` requires an XML parser (e.g. `quick-xml`). If splitting into 7a/7b, sitemap support is a natural fit for 7b to keep 7a leaner.
