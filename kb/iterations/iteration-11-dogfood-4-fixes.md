@@ -8,7 +8,7 @@ tags:
   - mcp
   - crawl
   - quality
-status: in-progress
+status: completed
 branch: iter-11/dogfood-4-fixes
 ---
 

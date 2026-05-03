@@ -61,7 +61,9 @@ pub fn extract(html: &str, url: &Url, options: &ExtractOptions) -> anyhow::Resul
                 .filter(|s| !s.is_empty())
                 .or_else(|| extract_meta_description(html));
             match raw_excerpt {
-                Some(desc) if looks_like_junk_description(&desc) => extract_body_excerpt(&markdown),
+                Some(desc) if looks_like_junk_description(&desc) => {
+                    extract_body_excerpt(&markdown).or(Some(desc))
+                }
                 Some(desc) => Some(desc),
                 None => extract_body_excerpt(&markdown),
             }

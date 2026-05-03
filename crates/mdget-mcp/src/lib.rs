@@ -388,20 +388,20 @@ impl MdgetServer {
         let results: Vec<CrawlSiteResult> = crawl_results
             .into_iter()
             .map(|r| {
+                let markdown = if max_length > 0 {
+                    mdget_core::truncate_output(&r.markdown, max_length)
+                } else {
+                    r.markdown
+                };
                 let content = if params.include_metadata {
                     let frontmatter = mdget_core::format_metadata_frontmatter(
                         &r.metadata,
                         r.url.as_str(),
                         r.word_count,
                     );
-                    format!("{frontmatter}\n{}", r.markdown)
+                    format!("{frontmatter}\n{markdown}")
                 } else {
-                    r.markdown
-                };
-                let content = if max_length > 0 {
-                    mdget_core::truncate_output(&content, max_length)
-                } else {
-                    content
+                    markdown
                 };
 
                 CrawlSiteResult {
