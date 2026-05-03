@@ -6,7 +6,7 @@ use url::Url;
 
 use crate::extract::{ExtractOptions, Metadata, extract, strip_images, word_count};
 use crate::fetch::{FetchOptions, fetch};
-use crate::links::extract_links;
+use crate::links::{extract_links, is_static_asset_url};
 use crate::normalize::normalize_url;
 use crate::robots::RobotsCache;
 
@@ -232,6 +232,15 @@ where
             continue;
         }
 
+        // Skip static assets (fonts, CSS, JS, images, etc.) before fetching.
+        if is_static_asset_url(&url) {
+            on_page(&CrawlProgress::Skipped {
+                url: url.to_string(),
+                reason: "static asset URL".to_string(),
+            });
+            continue;
+        }
+
         on_page(&CrawlProgress::Fetching {
             url: url.to_string(),
             depth,
@@ -283,6 +292,11 @@ where
                     if !accepted_hosts.contains(&link_host) {
                         continue;
                     }
+                }
+
+                // Silently skip static assets before queuing.
+                if is_static_asset_url(&link) {
+                    continue;
                 }
 
                 // Check robots.txt before queuing.

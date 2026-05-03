@@ -14,5 +14,5 @@ pub use extract::{
 };
 pub use fetch::{FetchOptions, FetchResult, fetch, read_local};
 pub use filename::generate_filename;
-pub use links::extract_links;
+pub use links::{extract_links, is_static_asset_url};
 pub use normalize::normalize_url;
