@@ -281,7 +281,19 @@ where
         // Add the final URL to visited too, in case it differs from the requested URL
         // (e.g., after a redirect). Prevents fetching the same page twice.
         let final_norm = normalize_url(final_url);
-        visited.insert(final_norm);
+        let redirected = final_norm != normalize_url(&url);
+        if redirected {
+            // If the final URL was already visited under a different requested URL,
+            // this is a duplicate fetch — skip to avoid duplicate results.
+            let is_new_final = visited.insert(final_norm);
+            if !is_new_final {
+                on_page(&CrawlProgress::Skipped {
+                    url: url.to_string(),
+                    reason: format!("redirected to already-visited {final_url}"),
+                });
+                continue;
+            }
+        }
 
         // After a redirect on the first page, also accept the destination host.
         // This handles legitimate cases like example.com → www.example.com without
@@ -409,9 +421,11 @@ pub fn infer_path_prefix(url: &Url) -> Option<String> {
     let last_slash = path.rfind('/')?;
     let prefix = &path[..=last_slash];
 
-    // If the prefix is just '/', no meaningful restriction (single segment like /page).
+    // If the prefix is just '/', this is a single-segment path like "/docs".
+    // Use "/docs/" as the prefix so the crawler stays within that section.
     if prefix == "/" {
-        return None;
+        // Single-segment path like "/docs" — use "/docs/" as the prefix.
+        return Some(format!("{path}/"));
     }
 
     Some(prefix.to_string())
@@ -470,7 +484,13 @@ mod tests {
     #[test]
     fn infer_path_prefix_single_segment() {
         let url = Url::parse("https://example.com/page").unwrap();
-        assert_eq!(infer_path_prefix(&url), None);
+        assert_eq!(infer_path_prefix(&url), Some("/page/".to_string()));
+    }
+
+    #[test]
+    fn infer_path_prefix_single_segment_docs() {
+        let url = Url::parse("https://example.com/docs").unwrap();
+        assert_eq!(infer_path_prefix(&url), Some("/docs/".to_string()));
     }
 
     #[test]
