@@ -173,6 +173,29 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Start MCP (Model Context Protocol) server on stdio
+    #[command(long_about = "Start an MCP server on stdio transport.\n\n\
+        This exposes mdget as an MCP tool server so AI agents can fetch web\n\
+        content as markdown without shelling out to a CLI.\n\n\
+        Available tools:\n  \
+        - fetch_markdown: Fetch a URL and return clean markdown\n  \
+        - fetch_metadata: Fetch a URL and return only YAML metadata\n  \
+        - batch_fetch: Fetch multiple URLs in parallel\n\n\
+        SETUP (Claude Code):\n  \
+        Add to your .claude/settings.json or .mcp.json:\n  \
+        {\n    \
+          \"mcpServers\": {\n      \
+            \"mdget\": { \"command\": \"mdget\", \"args\": [\"serve\"] }\n    \
+          }\n  \
+        }\n\n\
+        SETUP (Claude Desktop):\n  \
+        Add to your claude_desktop_config.json:\n  \
+        {\n    \
+          \"mcpServers\": {\n      \
+            \"mdget\": { \"command\": \"mdget\", \"args\": [\"serve\"] }\n    \
+          }\n  \
+        }")]
+    Serve,
     /// Install Claude Code integration (skill + CLAUDE.md hint)
     Init {
         /// Install Claude Code skill and CLAUDE.md hint
@@ -194,6 +217,7 @@ fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     match &cli.command {
+        Some(Command::Serve) => run_serve(),
         Some(Command::Init { claude, global }) => {
             if !claude {
                 anyhow::bail!("init requires --claude flag");
@@ -219,6 +243,10 @@ fn main() -> anyhow::Result<()> {
             run_batch(&all_inputs, &cli)
         }
     }
+}
+
+fn run_serve() -> anyhow::Result<()> {
+    mdget_mcp::run_server()
 }
 
 fn is_binary_mime(mime: &str) -> bool {

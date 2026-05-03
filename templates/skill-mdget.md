@@ -22,7 +22,13 @@ mdget <URL>                        # fetch, extract, convert to markdown, print 
 mdget <URL> -o output.md           # write output to a named file
 mdget <URL> -O                     # auto-generate filename from page title or URL
 mdget <URL> --raw                  # skip readability extraction, convert full HTML
+mdget <URL> --include-metadata     # prepend YAML frontmatter
+mdget <URL> -m                     # metadata only, skip body
+mdget <URL> --no-images            # strip image references
+mdget <URL> --max-length 5000      # truncate to N characters
+mdget <URL> --retries 5            # retry transient errors (default: 2)
 mdget <URL> -t 30                  # set HTTP timeout in seconds (default: 30)
+mdget serve                        # start MCP server on stdio
 mdget -V                           # print version
 ```
 
@@ -33,8 +39,14 @@ mdget -V                           # print version
 | `--output <FILE>`  | `-o`  |         | Write output to the named file                   |
 | `--auto-filename`  | `-O`  |         | Auto-generate filename from page title or URL    |
 | `--raw`            | `-r`  |         | Skip readability extraction, convert full HTML   |
+| `--include-metadata`|      |         | Prepend YAML frontmatter with metadata           |
+| `--metadata-only`  | `-m`  |         | Print only YAML frontmatter, skip body           |
+| `--no-images`      |       |         | Strip image references from markdown output      |
+| `--max-length <N>` |       |         | Truncate output to N characters                  |
+| `--retries <N>`    |       | `2`     | Retry count for transient HTTP errors            |
 | `--timeout <SECS>` | `-t`  | `30`    | HTTP timeout in seconds                          |
 | `--user-agent <UA>`| `-A`  |         | Override the User-Agent header                   |
+| `--quiet`          | `-q`  |         | Suppress progress messages on stderr             |
 | `--version`        | `-V`  |         | Print version info                               |
 
 ## stdout/stderr Contract
@@ -82,9 +94,30 @@ mdget https://example.com/docs -o docs.md
 cat docs.md | llm "Extract all API endpoints from this document"
 ```
 
+## MCP Server
+
+mdget can also run as an MCP server, giving you direct tool access without shelling out:
+
+```sh
+mdget serve    # start MCP server on stdio
+```
+
+Add to `.claude/settings.json` or `.mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "mdget": { "command": "mdget", "args": ["serve"] }
+  }
+}
+```
+
+Available MCP tools: `fetch_markdown`, `fetch_metadata`, `batch_fetch`.
+
 ## Rules
 
 1. **Always prefer `mdget <URL>`** over `curl` or `WebFetch` when the goal is to read web page content as text or markdown.
-2. **Pipe-friendly by default.** When you need to chain mdget output into another command, just pipe stdout -- no extra flags needed.
-3. **Use `--raw` sparingly.** Only use it when you need the complete HTML structure (e.g., scraping navigation, footers, or non-article pages). For articles and documentation, the default readability mode produces cleaner output.
-4. **Use `-o` or `-O` when the content will be referenced later.** If the content is only needed for a single immediate task, piping stdout is sufficient.
+2. **If mdget is configured as an MCP server**, prefer the MCP tools (`fetch_markdown`, `fetch_metadata`, `batch_fetch`) over the CLI for programmatic access.
+3. **Pipe-friendly by default.** When you need to chain mdget output into another command, just pipe stdout -- no extra flags needed.
+4. **Use `--raw` sparingly.** Only use it when you need the complete HTML structure (e.g., scraping navigation, footers, or non-article pages). For articles and documentation, the default readability mode produces cleaner output.
+5. **Use `-o` or `-O` when the content will be referenced later.** If the content is only needed for a single immediate task, piping stdout is sufficient.

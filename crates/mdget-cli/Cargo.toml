@@ -15,11 +15,16 @@ path = "src/main.rs"
 name = "e2e"
 path = "tests/e2e/mod.rs"
 
+[[test]]
+name = "mcp"
+path = "tests/mcp/mod.rs"
+
 [lints]
 workspace = true
 
 [dependencies]
 mdget-core = { workspace = true }
+mdget-mcp = { workspace = true }
 anyhow = { workspace = true }
 clap = { workspace = true, features = ["derive", "wrap_help"] }
 url = { workspace = true }
@@ -28,4 +33,5 @@ url = { workspace = true }
 assert_cmd = { workspace = true }
 mockito = { workspace = true }
 predicates = { workspace = true }
+serde_json = { workspace = true }
 tempfile = { workspace = true }
