@@ -6,7 +6,7 @@ tags:
   - iteration
   - mcp
   - ai-agents
-status: in-progress
+status: completed
 branch: iter-6/mcp-server
 ---
 

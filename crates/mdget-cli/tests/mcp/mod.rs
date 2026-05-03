@@ -832,3 +832,48 @@ fn mcp_fetch_markdown_connection_refused() {
         "connection refused should produce isError: true: {resp:?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// 17. mcp_fetch_markdown_embedded_credentials
+// ---------------------------------------------------------------------------
+#[test]
+fn mcp_fetch_markdown_embedded_credentials() {
+    let mut client = McpClient::new();
+    let (_id, resp) = client.call_tool(
+        "fetch_markdown",
+        json!({"url": "https://user:pass@example.com/page"}),
+    );
+
+    assert!(
+        McpClient::is_error(&resp),
+        "URL with credentials should produce isError: true: {resp:?}"
+    );
+
+    let text = McpClient::result_text(&resp);
+    assert!(
+        text.contains("credentials"),
+        "error should mention credentials: {text}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 18. mcp_batch_fetch_too_many_urls
+// ---------------------------------------------------------------------------
+#[test]
+fn mcp_batch_fetch_too_many_urls() {
+    let urls: Vec<String> = (0..51).map(|i| format!("http://example.com/{i}")).collect();
+
+    let mut client = McpClient::new();
+    let (_id, resp) = client.call_tool("batch_fetch", json!({"urls": urls}));
+
+    assert!(
+        McpClient::is_error(&resp),
+        "too many URLs should produce isError: true: {resp:?}"
+    );
+
+    let text = McpClient::result_text(&resp);
+    assert!(
+        text.contains("at most 50") || text.contains("50"),
+        "error should mention the limit: {text}"
+    );
+}

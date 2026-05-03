@@ -74,7 +74,7 @@ Crawling is long-running — MCP's request/response model isn't a natural fit. O
 - Return a summary with page list + errors rather than streaming content
 - Defer MCP crawl tool entirely and let agents use the CLI via shell
 
-Decision deferred until after iteration 6 (MCP server) is implemented and we understand the MCP integration patterns better.
+Decision deferred until after [[iteration-06-mcp-server|iteration 6 (MCP server)]] is implemented and we understand the MCP integration patterns better.
 
 ### robots.txt crate selection
 

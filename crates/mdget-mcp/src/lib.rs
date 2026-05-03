@@ -89,6 +89,8 @@ struct BatchResult {
     error: Option<String>,
 }
 
+const MAX_BATCH_URLS: usize = 50;
+
 // ── Tool implementations ────────────────────────────────────────────────
 
 #[tool_router]
@@ -210,6 +212,11 @@ impl MdgetServer {
         if params.urls.is_empty() {
             return Err("urls array must not be empty".to_string());
         }
+        if params.urls.len() > MAX_BATCH_URLS {
+            return Err(format!(
+                "urls array must contain at most {MAX_BATCH_URLS} entries"
+            ));
+        }
         for url in &params.urls {
             validate_url(url)?;
         }
@@ -283,6 +290,9 @@ impl ServerHandler for MdgetServer {
 
 fn validate_url(url: &str) -> Result<(), String> {
     let parsed = url::Url::parse(url).map_err(|e| format!("invalid URL '{url}': {e}"))?;
+    if !parsed.username().is_empty() || parsed.password().is_some() {
+        return Err("URLs with embedded credentials are not supported".to_string());
+    }
     match parsed.scheme() {
         "http" | "https" => Ok(()),
         s => Err(format!(
