@@ -1,3 +1,6 @@
+use std::path::PathBuf;
+use std::time::Duration;
+
 use anyhow::Context;
 use clap::{Parser, Subcommand};
 
@@ -47,6 +50,12 @@ COOKBOOK:
     # Cap output size for context-window-limited models
     mdget --max-length 5000 https://example.com/long-article
 
+    # Crawl a documentation site (follow links 2 levels deep)
+    mdget crawl --depth 2 --max-pages 50 https://docs.example.com
+
+    # Crawl and save each page as a separate file
+    mdget crawl --output-dir ./docs https://docs.example.com
+
 BEHAVIOR NOTES:
     Redirects: mdget follows HTTP 3xx redirects and <meta http-equiv=\"refresh\">
     tags, up to 10 total hops (combined). The redirect chain is reported on
@@ -76,6 +85,7 @@ AGENT TIPS:
     Use -q/--quiet to suppress progress messages in automated pipelines.
     Use -m/--metadata-only to triage URLs before full fetch.
     Use --no-images to save tokens -- LLMs cannot see images anyway.
+    Use 'mdget crawl' to fetch entire doc sites -- follows links breadth-first.
     Note: 4xx errors are not retried; check the URL before retrying manually."
 )]
 struct Cli {
@@ -173,6 +183,48 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Crawl a website following links breadth-first
+    #[command(
+        long_about = "Crawl a website breadth-first, following links up to a configurable depth.\n\n\
+            Each discovered page is fetched, converted to clean markdown, and output\n\
+            to stdout or saved to individual files.\n\n\
+            EXAMPLES:\n    \
+            mdget crawl https://docs.example.com              # crawl with defaults\n    \
+            mdget crawl --depth 2 https://docs.example.com    # follow links 2 levels deep\n    \
+            mdget crawl --delay 2 https://docs.example.com    # 2 seconds between requests\n    \
+            mdget crawl --max-pages 50 https://docs.example.com\n    \
+            mdget crawl -O https://docs.example.com           # auto-generate filenames\n    \
+            mdget crawl --output-dir ./docs https://docs.example.com  # save to directory"
+    )]
+    Crawl {
+        /// Starting URL to crawl from
+        #[arg(value_name = "URL")]
+        url: String,
+
+        /// Maximum link depth to follow (0 = start page only)
+        #[arg(long, default_value = "1", value_name = "N")]
+        depth: u32,
+
+        /// Seconds to wait between requests
+        #[arg(long, default_value = "1", value_name = "SECS")]
+        delay: u64,
+
+        /// Maximum number of pages to fetch
+        #[arg(long = "max-pages", default_value = "20", value_name = "N")]
+        max_pages: usize,
+
+        /// Follow links to other hosts
+        #[arg(long = "follow-external")]
+        follow_external: bool,
+
+        /// Write one markdown file per page in this directory (mirrors URL path)
+        #[arg(long = "output-dir", value_name = "DIR")]
+        output_dir: Option<String>,
+
+        /// Auto-generate filename per page in current directory
+        #[arg(short = 'O', long = "auto-filename")]
+        auto_filename: bool,
+    },
     /// Start MCP (Model Context Protocol) server on stdio
     #[command(long_about = "Start an MCP server on stdio transport.\n\n\
         This exposes mdget as an MCP tool server so AI agents can fetch web\n\
@@ -217,6 +269,24 @@ fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     match &cli.command {
+        Some(Command::Crawl {
+            url,
+            depth,
+            delay,
+            max_pages,
+            follow_external,
+            output_dir,
+            auto_filename,
+        }) => run_crawl(
+            url,
+            &cli,
+            *depth,
+            *delay,
+            *max_pages,
+            *follow_external,
+            output_dir.as_deref(),
+            *auto_filename,
+        ),
         Some(Command::Serve) => run_serve(),
         Some(Command::Init { claude, global }) => {
             if !claude {
@@ -247,6 +317,167 @@ fn main() -> anyhow::Result<()> {
 
 fn run_serve() -> anyhow::Result<()> {
     mdget_mcp::run_server()
+}
+
+/// Compute the output file path for a crawled URL inside `output_dir`.
+///
+/// When `include_host` is true (e.g. `--follow-external` crawls), the hostname
+/// is prepended so that pages from different origins don't collide.
+fn url_to_output_path(url: &url::Url, output_dir: &str, include_host: bool) -> PathBuf {
+    let mut path = PathBuf::from(output_dir);
+
+    if include_host && let Some(host) = url.host_str() {
+        path.push(host);
+    }
+
+    // Build the path from URL path segments.
+    let url_path = url.path();
+    if url_path == "/" || url_path.is_empty() {
+        path.push("index.md");
+        return path;
+    }
+
+    // Split on '/' and push each non-empty segment.
+    let segments: Vec<&str> = url_path
+        .trim_matches('/')
+        .split('/')
+        .filter(|s| !s.is_empty())
+        .collect();
+
+    if segments.is_empty() {
+        path.push("index.md");
+        return path;
+    }
+
+    // All segments except the last are directories.
+    for segment in &segments[..segments.len() - 1] {
+        path.push(segment);
+    }
+
+    let last = segments[segments.len() - 1];
+    // If the original path ends with '/', treat the last segment as a directory
+    // and use index.md inside it.
+    if url_path.ends_with('/') {
+        path.push(last);
+        path.push("index.md");
+    } else {
+        // Append .md extension (replacing any existing extension to avoid double-ext).
+        let stem = std::path::Path::new(last)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or(last);
+        path.push(format!("{stem}.md"));
+    }
+
+    path
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_crawl(
+    start_url: &str,
+    cli: &Cli,
+    depth: u32,
+    delay: u64,
+    max_pages: usize,
+    follow_external: bool,
+    output_dir: Option<&str>,
+    auto_filename: bool,
+) -> anyhow::Result<()> {
+    let options = mdget_core::CrawlOptions {
+        fetch_options: mdget_core::FetchOptions {
+            timeout_secs: cli.timeout,
+            user_agent: cli.user_agent.clone(),
+            retries: cli.retries,
+            quiet: cli.quiet,
+        },
+        extract_options: mdget_core::ExtractOptions { raw: cli.raw },
+        max_depth: depth,
+        max_pages,
+        delay: Duration::from_secs(delay),
+        follow_external,
+        no_images: cli.no_images,
+        include_metadata: cli.include_metadata,
+    };
+
+    let quiet = cli.quiet;
+    let results = mdget_core::crawl(start_url, &options, |progress| {
+        if quiet {
+            return;
+        }
+        match progress {
+            mdget_core::CrawlProgress::Fetching {
+                url,
+                depth: d,
+                queue_size,
+                fetched,
+            } => {
+                eprintln!(
+                    "[{}/{}] Fetching {} (depth {d}, queued: {queue_size})",
+                    fetched + 1,
+                    max_pages,
+                    url
+                );
+            }
+            mdget_core::CrawlProgress::Fetched { url: _, title } => {
+                if let Some(t) = title {
+                    eprintln!("  \u{2192} {t}");
+                }
+            }
+            mdget_core::CrawlProgress::Skipped { url, reason } => {
+                eprintln!("  \u{26a0} Skipped: {url} ({reason})");
+            }
+            mdget_core::CrawlProgress::Error { url, error } => {
+                eprintln!("  \u{2717} Error: {url} ({error})");
+            }
+            mdget_core::CrawlProgress::Done { total } => {
+                eprintln!("Crawl complete: {total} pages fetched");
+            }
+        }
+    })?;
+
+    // Output phase
+    for (page_index, result) in results.iter().enumerate() {
+        let frontmatter = mdget_core::format_metadata_frontmatter(
+            &result.metadata,
+            result.url.as_str(),
+            result.word_count,
+        );
+        let body = if result.markdown.ends_with('\n') {
+            result.markdown.clone() // clone needed: must be an owned String to format with frontmatter
+        } else {
+            format!("{}\n", result.markdown)
+        };
+        let page_content = format!("{frontmatter}\n{body}");
+
+        if let Some(dir) = output_dir {
+            let out_path = url_to_output_path(&result.url, dir, follow_external);
+            if let Some(parent) = out_path.parent() {
+                std::fs::create_dir_all(parent)
+                    .with_context(|| format!("failed to create directory: {}", parent.display()))?;
+            }
+            std::fs::write(&out_path, &page_content)
+                .with_context(|| format!("failed to write to {}", out_path.display()))?;
+            if !quiet {
+                eprintln!("Saved {}", out_path.display());
+            }
+        } else if auto_filename {
+            let filename = mdget_core::generate_filename(result.title.as_deref(), &result.url);
+            std::fs::write(&filename, &page_content)
+                .with_context(|| format!("failed to write to {filename}"))?;
+            if !quiet {
+                eprintln!("Saved {filename}");
+            }
+        } else {
+            // Stdout: separate pages with a blank line between them.
+            // Each page begins with its own YAML frontmatter --- block.
+            if page_index > 0 {
+                println!();
+            }
+            print!("{page_content}");
+        }
+    }
+
+    Ok(())
 }
 
 fn is_binary_mime(mime: &str) -> bool {

@@ -10,7 +10,7 @@ pub struct ExtractOptions {
 }
 
 /// Metadata extracted from a page via readability.
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct Metadata {
     pub title: Option<String>,
     pub byline: Option<String>,

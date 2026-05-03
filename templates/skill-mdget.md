@@ -28,6 +28,10 @@ mdget <URL> --no-images            # strip image references
 mdget <URL> --max-length 5000      # truncate to N characters
 mdget <URL> --retries 5            # retry transient errors (default: 2)
 mdget <URL> -t 30                  # set HTTP timeout in seconds (default: 30)
+mdget crawl <URL>                  # crawl site, following links (depth 1, max 20 pages)
+mdget crawl --depth 2 <URL>        # follow links 2 levels deep
+mdget crawl --output-dir ./docs <URL>  # save each page as a separate file
+mdget crawl --max-pages 50 <URL>   # increase page limit
 mdget serve                        # start MCP server on stdio
 mdget -V                           # print version
 ```
@@ -48,6 +52,17 @@ mdget -V                           # print version
 | `--user-agent <UA>`| `-A`  |         | Override the User-Agent header                   |
 | `--quiet`          | `-q`  |         | Suppress progress messages on stderr             |
 | `--version`        | `-V`  |         | Print version info                               |
+
+### Crawl Subcommand Flags
+
+| Flag                | Short | Default | Description                                      |
+|---------------------|-------|---------|--------------------------------------------------|
+| `--depth <N>`       |       | `1`     | Maximum link depth to follow                     |
+| `--delay <SECS>`    |       | `1`     | Seconds to wait between requests                 |
+| `--max-pages <N>`   |       | `20`    | Maximum number of pages to fetch                 |
+| `--follow-external` |       |         | Follow links to other hosts                      |
+| `--output-dir <DIR>`|       |         | Save each page as a file (mirrors URL path)      |
+| `--auto-filename`   | `-O`  |         | Auto-generate filename per page                  |
 
 ## stdout/stderr Contract
 
@@ -92,6 +107,20 @@ Store a page then analyze it:
 mdget https://example.com/docs -o docs.md
 # later
 cat docs.md | llm "Extract all API endpoints from this document"
+```
+
+## Crawling
+
+Crawl a documentation site and save each page:
+
+```sh
+mdget crawl --output-dir ./docs --depth 2 --max-pages 100 https://docs.example.com
+```
+
+Crawl to stdout (pages delimited by YAML frontmatter fences):
+
+```sh
+mdget crawl https://docs.example.com | llm "Summarize these docs"
 ```
 
 ## MCP Server
