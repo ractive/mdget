@@ -2709,3 +2709,146 @@ fn sitemap_index_nested() {
     mock_root.assert();
     mock_article.assert();
 }
+
+// ---------------------------------------------------------------------------
+// 62. crawl_single_segment_prefix
+// ---------------------------------------------------------------------------
+#[test]
+fn crawl_single_segment_prefix() {
+    let mut server = Server::new();
+
+    // Start URL is /docs (single segment) — crawler should infer prefix "/docs/"
+    // and only follow links under /docs/.
+    let docs_page_url = format!("{}/docs/getting-started", server.url());
+    let blog_url = format!("{}/blog/news", server.url());
+
+    let docs_html = crawl_page(
+        "Docs Root",
+        "Documentation root page.",
+        &[&docs_page_url, &blog_url],
+    );
+    let getting_started_html = crawl_page("Getting Started", "Getting started content.", &[]);
+
+    let mock_docs = server
+        .mock("GET", "/docs")
+        .with_status(200)
+        .with_header("Content-Type", "text/html; charset=utf-8")
+        .with_body(docs_html)
+        .create();
+    let mock_getting_started = server
+        .mock("GET", "/docs/getting-started")
+        .with_status(200)
+        .with_header("Content-Type", "text/html; charset=utf-8")
+        .with_body(getting_started_html)
+        .create();
+    // /blog/news should NOT be fetched because it's outside /docs/ prefix
+    let mock_blog = server
+        .mock("GET", "/blog/news")
+        .with_status(200)
+        .with_header("Content-Type", "text/html; charset=utf-8")
+        .with_body(crawl_page("Blog", "Blog content.", &[]))
+        .expect(0)
+        .create();
+
+    let url = format!("{}/docs", server.url());
+    let output = mdget()
+        .args(["-t", "5", "--retries", "0", "crawl", "--delay", "0", &url])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "crawl should succeed; stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("Documentation root page"),
+        "docs root should be in output: {stdout}"
+    );
+    assert!(
+        stdout.contains("Getting started content"),
+        "getting-started under /docs/ should be in output: {stdout}"
+    );
+    assert!(
+        !stdout.contains("Blog content"),
+        "blog page outside /docs/ should NOT be in output: {stdout}"
+    );
+
+    mock_docs.assert();
+    mock_getting_started.assert();
+    mock_blog.assert();
+}
+
+// ---------------------------------------------------------------------------
+// 63. crawl_redirect_dedup
+// ---------------------------------------------------------------------------
+#[test]
+fn crawl_redirect_dedup() {
+    let mut server = Server::new();
+
+    // /page redirects to /canonical — crawler should not produce duplicate results.
+    let page_url = format!("{}/page", server.url());
+    let canonical_url = format!("{}/canonical", server.url());
+
+    let root_html = crawl_page("Root", "Root body.", &[&page_url, &canonical_url]);
+    let canonical_html = crawl_page("Canonical Page", "Canonical page content.", &[]);
+
+    let mock_root = server
+        .mock("GET", "/")
+        .with_status(200)
+        .with_header("Content-Type", "text/html; charset=utf-8")
+        .with_body(root_html)
+        .create();
+    let mock_page = server
+        .mock("GET", "/page")
+        .with_status(301)
+        .with_header("Location", &canonical_url)
+        .with_body("")
+        .create();
+    // The canonical URL will be hit once via the redirect follow-through from /page,
+    // and again when the BFS dequeues /canonical directly. The dedup prevents adding
+    // duplicate results, but cannot prevent the redirect follow-through HTTP request.
+    let mock_canonical = server
+        .mock("GET", "/canonical")
+        .with_status(200)
+        .with_header("Content-Type", "text/html; charset=utf-8")
+        .with_body(canonical_html)
+        .expect_at_least(1)
+        .create();
+
+    let output = mdget()
+        .args([
+            "-t",
+            "5",
+            "--retries",
+            "0",
+            "crawl",
+            "--delay",
+            "0",
+            &server.url(),
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "crawl should succeed; stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    // The canonical page should only be fetched once — check that the source URL
+    // appears exactly once in the frontmatter. "Canonical page content" appears
+    // twice per result (in excerpt + body), so we check the source field instead.
+    let source_count = stdout.matches("/canonical\"").count();
+    assert_eq!(
+        source_count, 1,
+        "canonical URL should appear as source exactly once (no duplicates from redirect), got {source_count}: {stdout}"
+    );
+
+    mock_root.assert();
+    mock_page.assert();
+    mock_canonical.assert();
+}
