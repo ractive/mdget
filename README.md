@@ -40,6 +40,15 @@ mdget --include-metadata --no-images https://example.com/article
 
 # Truncate long pages
 mdget --max-length 5000 https://example.com/article
+
+# Crawl a documentation site (follow links breadth-first)
+mdget crawl https://docs.example.com
+
+# Crawl deeper and save each page as a file
+mdget crawl --depth 2 --output-dir ./docs https://docs.example.com
+
+# Crawl with higher page limit
+mdget crawl --max-pages 100 https://docs.example.com
 ```
 
 ## CLI Reference
@@ -55,6 +64,9 @@ mdget <URL> --no-images            # strip image references
 mdget <URL> --max-length 5000      # truncate to N characters
 mdget <URL> --retries 5             # retry transient errors (default: 2)
 mdget <URL> -t 30                  # timeout in seconds (default: 30)
+mdget crawl <URL>                  # crawl site following links (depth 1, max 20)
+mdget crawl --depth 2 <URL>        # follow links 2 levels deep
+mdget crawl --output-dir ./docs <URL>  # save each page as a file
 mdget -V                           # print version
 ```
 
@@ -74,6 +86,17 @@ mdget -V                           # print version
 | `--user-agent` | `-A` | Override User-Agent header |
 | `--quiet` | `-q` | Suppress progress messages on stderr |
 | `--version` | `-V` | Print version info |
+
+### Crawl Flags
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--depth` | `1` | Maximum link depth to follow (0 = start page only) |
+| `--delay` | `1` | Seconds to wait between requests |
+| `--max-pages` | `20` | Maximum number of pages to fetch |
+| `--follow-external` | | Follow links to other hosts |
+| `--output-dir` | | Save each page as a file (mirrors URL path) |
+| `--auto-filename` / `-O` | | Auto-generate filename per page |
 
 ## MCP Server
 

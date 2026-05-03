@@ -1658,3 +1658,648 @@ fn cli_help_contains_cookbook() {
         .stdout(predicate::str::contains("BEHAVIOR NOTES:"))
         .stdout(predicate::str::contains("AGENT TIPS:"));
 }
+
+// ===========================================================================
+// Crawl subcommand tests (iteration 7)
+// ===========================================================================
+
+/// Build a self-contained HTML page suitable for readability extraction.
+/// `links` are rendered as <a href> elements in a <nav> block.
+fn crawl_page(title: &str, body: &str, links: &[&str]) -> String {
+    let link_html: String = links.iter().fold(String::new(), |mut acc, l| {
+        use std::fmt::Write as _;
+        let _ = write!(acc, r#"<a href="{l}">link</a> "#);
+        acc
+    });
+    format!(
+        r"<!DOCTYPE html>
+<html><head><title>{title}</title></head>
+<body><article>
+  <h1>{title}</h1>
+  <p>{body} This paragraph has enough content for readability to work.
+  Extra sentences help ensure the extraction threshold is met by the algorithm.</p>
+  <nav>{link_html}</nav>
+</article></body></html>"
+    )
+}
+
+// ---------------------------------------------------------------------------
+// 48. crawl_basic
+// ---------------------------------------------------------------------------
+#[test]
+fn crawl_basic() {
+    let mut server = Server::new();
+
+    let page2_url = format!("{}/page2", server.url());
+    let root_html = crawl_page("Root Page", "Root body text.", &[&page2_url]);
+    let page2_html = crawl_page("Page Two", "Page two body text.", &[]);
+
+    let mock_root = server
+        .mock("GET", "/")
+        .with_status(200)
+        .with_header("Content-Type", "text/html; charset=utf-8")
+        .with_body(root_html)
+        .create();
+    let mock_page2 = server
+        .mock("GET", "/page2")
+        .with_status(200)
+        .with_header("Content-Type", "text/html; charset=utf-8")
+        .with_body(page2_html)
+        .create();
+
+    let output = mdget()
+        .args([
+            "-t",
+            "5",
+            "--retries",
+            "0",
+            "crawl",
+            "--delay",
+            "0",
+            &server.url(),
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "crawl should succeed; stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    // Both pages should have frontmatter with source:
+    let source_count = stdout.matches("source:").count();
+    assert!(
+        source_count >= 2,
+        "expected frontmatter for both pages (2 source: lines), got {source_count}: {stdout}"
+    );
+
+    mock_root.assert();
+    mock_page2.assert();
+}
+
+// ---------------------------------------------------------------------------
+// 49. crawl_depth_zero
+// ---------------------------------------------------------------------------
+#[test]
+fn crawl_depth_zero() {
+    let mut server = Server::new();
+
+    let page2_url = format!("{}/page2", server.url());
+    let root_html = crawl_page("Root Page", "Root body text.", &[&page2_url]);
+
+    let mock_root = server
+        .mock("GET", "/")
+        .with_status(200)
+        .with_header("Content-Type", "text/html; charset=utf-8")
+        .with_body(root_html)
+        .create();
+    // page2 should NOT be requested when depth=0
+    let mock_page2 = server
+        .mock("GET", "/page2")
+        .with_status(200)
+        .with_header("Content-Type", "text/html; charset=utf-8")
+        .with_body(crawl_page("Page Two", "Page two.", &[]))
+        .expect(0)
+        .create();
+
+    let output = mdget()
+        .args([
+            "-t",
+            "5",
+            "--retries",
+            "0",
+            "crawl",
+            "--delay",
+            "0",
+            "--depth",
+            "0",
+            &server.url(),
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "crawl should succeed; stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let source_count = stdout.matches("source:").count();
+    assert_eq!(
+        source_count, 1,
+        "depth=0 should fetch only the start page, got {source_count} source: lines: {stdout}"
+    );
+
+    mock_root.assert();
+    mock_page2.assert();
+}
+
+// ---------------------------------------------------------------------------
+// 50. crawl_max_pages
+// ---------------------------------------------------------------------------
+#[test]
+fn crawl_max_pages() {
+    let mut server = Server::new();
+
+    // Build a chain: root → /p1 → /p2 → /p3 → /p4
+    let p4_url = format!("{}/p4", server.url());
+    let p3_url = format!("{}/p3", server.url());
+    let p2_url = format!("{}/p2", server.url());
+    let p1_url = format!("{}/p1", server.url());
+
+    let mock_root = server
+        .mock("GET", "/")
+        .with_status(200)
+        .with_header("Content-Type", "text/html; charset=utf-8")
+        .with_body(crawl_page("Root", "Root body.", &[&p1_url]))
+        .create();
+    let mock_p1 = server
+        .mock("GET", "/p1")
+        .with_status(200)
+        .with_header("Content-Type", "text/html; charset=utf-8")
+        .with_body(crawl_page("P1", "P1 body.", &[&p2_url]))
+        .create();
+    // With --max-pages 2 and --depth 2, only root + p1 should be fetched.
+    // p2 and beyond should not be requested.
+    let mock_p2 = server
+        .mock("GET", "/p2")
+        .with_status(200)
+        .with_header("Content-Type", "text/html; charset=utf-8")
+        .with_body(crawl_page("P2", "P2 body.", &[&p3_url]))
+        .expect(0)
+        .create();
+    let mock_p3 = server
+        .mock("GET", "/p3")
+        .with_status(200)
+        .with_header("Content-Type", "text/html; charset=utf-8")
+        .with_body(crawl_page("P3", "P3 body.", &[&p4_url]))
+        .expect(0)
+        .create();
+    let mock_p4 = server
+        .mock("GET", "/p4")
+        .with_status(200)
+        .with_header("Content-Type", "text/html; charset=utf-8")
+        .with_body(crawl_page("P4", "P4 body.", &[]))
+        .expect(0)
+        .create();
+
+    let output = mdget()
+        .args([
+            "-t",
+            "5",
+            "--retries",
+            "0",
+            "crawl",
+            "--delay",
+            "0",
+            "--max-pages",
+            "2",
+            "--depth",
+            "2",
+            &server.url(),
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "crawl should succeed; stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let source_count = stdout.matches("source:").count();
+    assert_eq!(
+        source_count, 2,
+        "expected exactly 2 pages with --max-pages 2, got {source_count}: {stdout}"
+    );
+
+    mock_root.assert();
+    mock_p1.assert();
+    mock_p2.assert();
+    mock_p3.assert();
+    mock_p4.assert();
+}
+
+// ---------------------------------------------------------------------------
+// 51. crawl_same_host_only
+// ---------------------------------------------------------------------------
+#[test]
+fn crawl_same_host_only() {
+    let mut server = Server::new();
+
+    // Link to a real external domain that should be filtered out.
+    // We use https://example.com which has a different host than 127.0.0.1,
+    // so the crawl engine (which compares host_str()) will skip it.
+    let external_url = "https://example.com/external-page";
+    let same_host_url = format!("{}/internal", server.url());
+
+    let root_html = crawl_page("Root", "Root body.", &[external_url, &same_host_url]);
+    let internal_html = crawl_page("Internal", "Internal body.", &[]);
+
+    let mock_root = server
+        .mock("GET", "/")
+        .with_status(200)
+        .with_header("Content-Type", "text/html; charset=utf-8")
+        .with_body(root_html)
+        .create();
+    let mock_internal = server
+        .mock("GET", "/internal")
+        .with_status(200)
+        .with_header("Content-Type", "text/html; charset=utf-8")
+        .with_body(internal_html)
+        .create();
+
+    let output = mdget()
+        .args([
+            "-t",
+            "5",
+            "--retries",
+            "0",
+            "crawl",
+            "--delay",
+            "0",
+            &server.url(),
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "crawl should succeed; stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    // Only same-host pages should appear as fetched sources.
+    // example.com should not appear as a `source:` value (it may appear in link text).
+    let source_lines: Vec<&str> = stdout
+        .lines()
+        .filter(|l| l.starts_with("source:"))
+        .collect();
+    assert!(
+        source_lines.iter().all(|l| !l.contains("example.com")),
+        "external page should not have been fetched: {source_lines:?}"
+    );
+    // Both same-host pages should have been fetched (root + internal).
+    assert_eq!(
+        source_lines.len(),
+        2,
+        "expected exactly 2 same-host pages (root + internal), got: {source_lines:?}"
+    );
+
+    mock_root.assert();
+    mock_internal.assert();
+}
+
+// ---------------------------------------------------------------------------
+// 52. crawl_output_dir
+// ---------------------------------------------------------------------------
+#[test]
+fn crawl_output_dir() {
+    let mut server = Server::new();
+
+    let page2_url = format!("{}/page2", server.url());
+    let root_html = crawl_page("Root Page", "Root body text.", &[&page2_url]);
+    let page2_html = crawl_page("Page Two", "Page two body.", &[]);
+
+    let mock_root = server
+        .mock("GET", "/")
+        .with_status(200)
+        .with_header("Content-Type", "text/html; charset=utf-8")
+        .with_body(root_html)
+        .create();
+    let mock_page2 = server
+        .mock("GET", "/page2")
+        .with_status(200)
+        .with_header("Content-Type", "text/html; charset=utf-8")
+        .with_body(page2_html)
+        .create();
+
+    let dir = tempfile::tempdir().unwrap();
+    let output_dir = dir.path().to_str().unwrap();
+
+    let output = mdget()
+        .args([
+            "-t",
+            "5",
+            "--retries",
+            "0",
+            "crawl",
+            "--delay",
+            "0",
+            "--output-dir",
+            output_dir,
+            &server.url(),
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "crawl should succeed; stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Should have created index.md (for root /) and page2.md
+    let index_file = dir.path().join("index.md");
+    let page2_file = dir.path().join("page2.md");
+
+    assert!(
+        index_file.exists(),
+        "index.md should exist in output dir: {:?}",
+        dir.path()
+    );
+    assert!(
+        page2_file.exists(),
+        "page2.md should exist in output dir: {:?}",
+        dir.path()
+    );
+
+    // Files should contain frontmatter
+    let index_content = std::fs::read_to_string(&index_file).unwrap();
+    assert!(
+        index_content.starts_with("---\n"),
+        "index.md should have frontmatter"
+    );
+    let page2_content = std::fs::read_to_string(&page2_file).unwrap();
+    assert!(
+        page2_content.starts_with("---\n"),
+        "page2.md should have frontmatter"
+    );
+
+    mock_root.assert();
+    mock_page2.assert();
+}
+
+// ---------------------------------------------------------------------------
+// 53. crawl_auto_filename
+// ---------------------------------------------------------------------------
+#[test]
+fn crawl_auto_filename() {
+    let mut server = Server::new();
+
+    let page2_url = format!("{}/page2", server.url());
+    let root_html = crawl_page("Root Auto Page", "Root body text.", &[&page2_url]);
+    let page2_html = crawl_page("Second Auto Page", "Page two body.", &[]);
+
+    let mock_root = server
+        .mock("GET", "/")
+        .with_status(200)
+        .with_header("Content-Type", "text/html; charset=utf-8")
+        .with_body(root_html)
+        .create();
+    let mock_page2 = server
+        .mock("GET", "/page2")
+        .with_status(200)
+        .with_header("Content-Type", "text/html; charset=utf-8")
+        .with_body(page2_html)
+        .create();
+
+    let dir = tempfile::tempdir().unwrap();
+
+    let output = mdget()
+        .args([
+            "-t",
+            "5",
+            "--retries",
+            "0",
+            "crawl",
+            "--delay",
+            "0",
+            "-O",
+            &server.url(),
+        ])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "crawl should succeed; stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Two .md files should have been created
+    let md_files: Vec<_> = std::fs::read_dir(dir.path())
+        .unwrap()
+        .filter_map(std::result::Result::ok)
+        .filter(|e| e.path().extension().is_some_and(|ext| ext == "md"))
+        .collect();
+
+    assert_eq!(
+        md_files.len(),
+        2,
+        "expected 2 .md files, found: {:?}",
+        md_files
+            .iter()
+            .map(std::fs::DirEntry::file_name)
+            .collect::<Vec<_>>()
+    );
+
+    mock_root.assert();
+    mock_page2.assert();
+}
+
+// ---------------------------------------------------------------------------
+// 54. crawl_stdout_has_frontmatter
+// ---------------------------------------------------------------------------
+#[test]
+fn crawl_stdout_has_frontmatter() {
+    let mut server = Server::new();
+
+    let mock = server
+        .mock("GET", "/")
+        .with_status(200)
+        .with_header("Content-Type", "text/html; charset=utf-8")
+        .with_body(crawl_page("FM Test", "Frontmatter test content.", &[]))
+        .create();
+
+    let output = mdget()
+        .args([
+            "-t",
+            "5",
+            "--retries",
+            "0",
+            "crawl",
+            "--delay",
+            "0",
+            "--depth",
+            "0",
+            &server.url(),
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "crawl should succeed; stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.starts_with("---\n"),
+        "crawl stdout should start with YAML frontmatter: {stdout}"
+    );
+    assert!(
+        stdout.contains("source:"),
+        "crawl stdout should contain source: field: {stdout}"
+    );
+    assert!(
+        stdout.contains("title:"),
+        "crawl stdout should contain title: field: {stdout}"
+    );
+    // Should also have the closing --- of the frontmatter block
+    assert!(
+        stdout.matches("---").count() >= 2,
+        "frontmatter should have both opening and closing --- fences: {stdout}"
+    );
+
+    mock.assert();
+}
+
+// ---------------------------------------------------------------------------
+// 55. crawl_quiet_suppresses_progress
+// ---------------------------------------------------------------------------
+#[test]
+fn crawl_quiet_suppresses_progress() {
+    let mut server = Server::new();
+
+    let mock = server
+        .mock("GET", "/")
+        .with_status(200)
+        .with_header("Content-Type", "text/html; charset=utf-8")
+        .with_body(crawl_page("Quiet Test", "Quiet mode test content.", &[]))
+        .create();
+
+    let output = mdget()
+        .args([
+            "-q",
+            "-t",
+            "5",
+            "--retries",
+            "0",
+            "crawl",
+            "--delay",
+            "0",
+            "--depth",
+            "0",
+            &server.url(),
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "crawl should succeed; stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.is_empty(),
+        "quiet mode should produce no stderr output, got: {stderr}"
+    );
+
+    // stdout should still have content
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        !stdout.is_empty(),
+        "stdout should have content even in quiet mode"
+    );
+
+    mock.assert();
+}
+
+// ---------------------------------------------------------------------------
+// 56. crawl_follow_external
+// ---------------------------------------------------------------------------
+// The previous version of this test used two local mockito servers that both
+// bind to 127.0.0.1. Because host_str() doesn't include the port, both are
+// treated as same-host by the crawler, making the test pass even without
+// --follow-external. This rewrite uses a real external hostname to properly
+// exercise the flag.
+#[test]
+fn crawl_follow_external() {
+    let mut server1 = Server::new();
+
+    // Link to an external host — unreachable in tests, but that's fine:
+    // we're testing whether the crawler *attempts* it with --follow-external.
+    let root_html = crawl_page("Root", "Root body.", &["https://external.example.com/page"]);
+
+    // WITHOUT --follow-external: root is served once; external link is skipped.
+    let mock_root_no_follow = server1
+        .mock("GET", "/")
+        .with_status(200)
+        .with_header("Content-Type", "text/html; charset=utf-8")
+        .with_body(root_html.clone())
+        .create();
+
+    let output = mdget()
+        .args([
+            "-t",
+            "5",
+            "--retries",
+            "0",
+            "crawl",
+            "--delay",
+            "0",
+            &server1.url(),
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "crawl without --follow-external should succeed; stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let source_count = stdout.matches("source:").count();
+    assert_eq!(
+        source_count, 1,
+        "without --follow-external, only root should be crawled (got {source_count})"
+    );
+    mock_root_no_follow.assert();
+
+    // WITH --follow-external: crawler attempts the external URL.
+    // The fetch will fail (external.example.com is not a mock), but the root
+    // still succeeds and the external URL should appear in stderr progress output.
+    let mock_root_follow = server1
+        .mock("GET", "/")
+        .with_status(200)
+        .with_header("Content-Type", "text/html; charset=utf-8")
+        .with_body(root_html)
+        .create();
+
+    let output2 = mdget()
+        .args([
+            "-t",
+            "2",
+            "--retries",
+            "0",
+            "crawl",
+            "--delay",
+            "0",
+            "--follow-external",
+            &server1.url(),
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output2.status.success(),
+        "crawl with --follow-external should succeed even if external fetch fails; stderr: {}",
+        String::from_utf8_lossy(&output2.stderr)
+    );
+    let stderr2 = String::from_utf8_lossy(&output2.stderr);
+    assert!(
+        stderr2.contains("external.example.com"),
+        "with --follow-external, the external URL should appear in progress output; stderr: {stderr2}"
+    );
+    mock_root_follow.assert();
+}
