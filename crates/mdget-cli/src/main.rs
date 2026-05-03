@@ -146,11 +146,11 @@ struct Cli {
     )]
     no_images: bool,
 
-    /// Truncate output to N characters
+    /// Truncate output to N characters (0 = no limit)
     #[arg(
         long = "max-length",
         value_name = "N",
-        long_help = "Truncate output to approximately N characters.\n\nBreaks at the nearest paragraph, sentence, or word boundary before N.\nAppends '[Truncated]' when truncation occurs. Character-based (not tokens)\nfor predictability across models."
+        long_help = "Truncate output to approximately N characters.\n\nBreaks at the nearest paragraph, sentence, or word boundary before N.\nAppends '[Truncated]' when truncation occurs. Character-based (not tokens)\nfor predictability across models.\n\nUse 0 for no limit (no truncation applied)."
     )]
     max_length: Option<usize>,
 
@@ -249,6 +249,10 @@ enum Command {
         /// Auto-inferred from start URL path when not set.
         #[arg(long = "path-prefix", value_name = "PREFIX")]
         path_prefix: Option<String>,
+
+        /// Suppress progress messages (errors still shown)
+        #[arg(short = 'q', long = "quiet")]
+        quiet: bool,
     },
     /// Start MCP (Model Context Protocol) server on stdio
     #[command(long_about = "Start an MCP server on stdio transport.\n\n\
@@ -311,7 +315,7 @@ struct ProcessedInput {
 }
 
 fn main() -> anyhow::Result<()> {
-    let cli = Cli::parse();
+    let mut cli = Cli::parse();
 
     match &cli.command {
         Some(Command::Crawl {
@@ -325,21 +329,25 @@ fn main() -> anyhow::Result<()> {
             ignore_robots,
             sitemap,
             path_prefix,
-        }) => run_crawl(
-            &CrawlArgs {
-                url,
-                depth: *depth,
-                delay: *delay,
-                max_pages: *max_pages,
-                follow_external: *follow_external,
-                output_dir: output_dir.as_deref(),
-                auto_filename: *auto_filename,
-                ignore_robots: *ignore_robots,
-                use_sitemap: *sitemap,
-                path_prefix: path_prefix.as_deref(),
-            },
-            &cli,
-        ),
+            quiet,
+        }) => {
+            cli.quiet |= quiet;
+            run_crawl(
+                &CrawlArgs {
+                    url,
+                    depth: *depth,
+                    delay: *delay,
+                    max_pages: *max_pages,
+                    follow_external: *follow_external,
+                    output_dir: output_dir.as_deref(),
+                    auto_filename: *auto_filename,
+                    ignore_robots: *ignore_robots,
+                    use_sitemap: *sitemap,
+                    path_prefix: path_prefix.as_deref(),
+                },
+                &cli,
+            )
+        }
         Some(Command::Serve) => run_serve(),
         Some(Command::Init { claude, global }) => {
             if !claude {
@@ -661,6 +669,30 @@ fn process_single(input: &str, cli: &Cli) -> anyhow::Result<ProcessedInput> {
                  Try a dedicated tool like pdftotext, or convert the PDF to HTML first."
             );
         }
+        "application/rss+xml" | "application/atom+xml" => {
+            anyhow::bail!("RSS/Atom feed detected; use a feed parser instead of mdget");
+        }
+        "application/xml" | "text/xml" => {
+            let trimmed = fetch_result.body.trim_start();
+            if trimmed.starts_with("<rss")
+                || trimmed.starts_with("<feed")
+                || (trimmed.starts_with("<?xml")
+                    && (trimmed.contains("<rss") || trimmed.contains("<feed")))
+            {
+                anyhow::bail!("RSS/Atom feed detected; use a feed parser instead of mdget");
+            }
+            // Not a feed — warn and attempt HTML extraction
+            eprintln!("Warning: unexpected Content-Type '{mime_type}', attempting HTML extraction");
+            if !cli.quiet {
+                eprintln!("Extracting content...");
+            }
+            let r = mdget_core::extract(
+                &fetch_result.body,
+                &fetch_result.final_url,
+                &mdget_core::ExtractOptions { raw: cli.raw },
+            )?;
+            (r.markdown, r.title, r.metadata)
+        }
         t if is_binary_mime(t) => {
             anyhow::bail!("binary content ({mime_type}); mdget only processes HTML pages");
         }
@@ -689,9 +721,13 @@ fn process_single(input: &str, cli: &Cli) -> anyhow::Result<ProcessedInput> {
     // 2. Compute word count (after image stripping, before truncation)
     let wc = mdget_core::word_count(&output_text);
 
-    // 3. Truncate (if requested)
+    // 3. Truncate (if requested; 0 means no limit)
     let output_text = if let Some(max) = cli.max_length {
-        mdget_core::truncate_output(&output_text, max)
+        if max > 0 {
+            mdget_core::truncate_output(&output_text, max)
+        } else {
+            output_text
+        }
     } else {
         output_text
     };

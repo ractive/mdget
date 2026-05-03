@@ -812,7 +812,7 @@ fn mcp_validate_timeout_zero() {
 }
 
 // ---------------------------------------------------------------------------
-// 14. mcp_validate_max_length_zero
+// 14. mcp_validate_max_length_zero — 0 means "no limit" (success, no truncation)
 // ---------------------------------------------------------------------------
 #[test]
 fn mcp_validate_max_length_zero() {
@@ -823,14 +823,14 @@ fn mcp_validate_max_length_zero() {
     );
 
     assert!(
-        McpClient::is_error(&resp),
-        "max_length=0 should produce isError: true: {resp:?}"
+        !McpClient::is_error(&resp),
+        "max_length=0 should succeed (no limit): {resp:?}"
     );
 
     let text = McpClient::result_text(&resp);
     assert!(
-        text.contains("max_length") || text.contains("greater than 0"),
-        "error text should describe max_length constraint: {text}"
+        !text.contains("[Truncated]"),
+        "max_length=0 should not truncate: {text}"
     );
 }
 

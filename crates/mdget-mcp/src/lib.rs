@@ -106,6 +106,9 @@ pub struct CrawlSiteParams {
     #[serde(default)]
     pub include_metadata: bool,
 
+    /// Truncate each page's content to N characters (default 50000). Use 0 for no limit.
+    pub max_length: Option<usize>,
+
     /// HTTP timeout in seconds per request (default 30)
     pub timeout: Option<u64>,
 }
@@ -163,9 +166,6 @@ impl MdgetServer {
         Parameters(params): Parameters<FetchMarkdownParams>,
     ) -> Result<String, String> {
         validate_url(&params.url)?;
-        if let Some(max) = params.max_length {
-            validate_max_length(max)?;
-        }
         if let Some(t) = params.timeout {
             validate_timeout(t)?;
         }
@@ -199,7 +199,11 @@ impl MdgetServer {
         let wc = mdget_core::word_count(&markdown);
 
         let markdown = if let Some(max) = params.max_length {
-            mdget_core::truncate_output(&markdown, max)
+            if max > 0 {
+                mdget_core::truncate_output(&markdown, max)
+            } else {
+                markdown
+            }
         } else {
             markdown
         };
@@ -275,9 +279,6 @@ impl MdgetServer {
         for url in &params.urls {
             validate_url(url)?;
         }
-        if let Some(max) = params.max_length {
-            validate_max_length(max)?;
-        }
         if let Some(t) = params.timeout {
             validate_timeout(t)?;
         }
@@ -333,7 +334,7 @@ impl MdgetServer {
     /// Returns an array of pages with URL, title, content, and word count.
     #[tool(
         name = "crawl_site",
-        description = "Crawl a website breadth-first, following links up to a configurable depth. Returns an array of {url, title, content, word_count, depth} results. Great for exploring documentation sites."
+        description = "Crawl a website breadth-first, following links up to a configurable depth. Returns an array of {url, title, content, word_count, depth} results. Great for exploring documentation sites. Set `max_length` to control per-page content size (default 50000 chars)."
     )]
     fn crawl_site(
         &self,
@@ -354,6 +355,7 @@ impl MdgetServer {
 
         let depth = params.depth.unwrap_or(1);
         let delay = params.delay.unwrap_or(1);
+        let max_length = params.max_length.unwrap_or(50000);
 
         // Auto-infer path prefix from start URL if not explicitly set
         let path_prefix = if params.path_prefix.is_some() {
@@ -386,15 +388,20 @@ impl MdgetServer {
         let results: Vec<CrawlSiteResult> = crawl_results
             .into_iter()
             .map(|r| {
+                let markdown = if max_length > 0 {
+                    mdget_core::truncate_output(&r.markdown, max_length)
+                } else {
+                    r.markdown
+                };
                 let content = if params.include_metadata {
                     let frontmatter = mdget_core::format_metadata_frontmatter(
                         &r.metadata,
                         r.url.as_str(),
                         r.word_count,
                     );
-                    format!("{frontmatter}\n{}", r.markdown)
+                    format!("{frontmatter}\n{markdown}")
                 } else {
-                    r.markdown
+                    markdown
                 };
 
                 CrawlSiteResult {
@@ -460,13 +467,6 @@ fn validate_retries(r: u32) -> Result<(), String> {
     Ok(())
 }
 
-fn validate_max_length(n: usize) -> Result<(), String> {
-    if n == 0 {
-        return Err("max_length must be greater than 0".to_string());
-    }
-    Ok(())
-}
-
 #[allow(clippy::needless_pass_by_value)] // owned Error required for map_err(format_error) pattern
 fn format_error(e: anyhow::Error) -> String {
     // Strip anyhow context chain down to a clean user-facing message.
@@ -508,6 +508,28 @@ fn extract_content(
         )),
         "application/pdf" => {
             Err("PDF content detected; mdget cannot extract text from PDFs".to_string())
+        }
+        "application/rss+xml" | "application/atom+xml" => {
+            Err("RSS/Atom feed detected — use a feed parser instead of mdget".to_string())
+        }
+        "application/xml" | "text/xml" => {
+            let trimmed = fetch_result.body.trim_start();
+            if trimmed.starts_with("<rss")
+                || trimmed.starts_with("<feed")
+                || (trimmed.starts_with("<?xml")
+                    && (trimmed.contains("<rss") || trimmed.contains("<feed")))
+            {
+                Err("RSS/Atom feed detected — use a feed parser instead of mdget".to_string())
+            } else {
+                // Regular XML — attempt HTML extraction
+                let r = mdget_core::extract(
+                    &fetch_result.body,
+                    &fetch_result.final_url,
+                    &mdget_core::ExtractOptions { raw },
+                )
+                .map_err(format_error)?;
+                Ok((r.markdown, r.metadata, r.title))
+            }
         }
         t if t.starts_with("image/")
             || t.starts_with("audio/")
@@ -582,7 +604,11 @@ fn process_single_url(
     let wc = mdget_core::word_count(&markdown);
 
     let markdown = if let Some(max) = max_length {
-        mdget_core::truncate_output(&markdown, max)
+        if max > 0 {
+            mdget_core::truncate_output(&markdown, max)
+        } else {
+            markdown
+        }
     } else {
         markdown
     };
