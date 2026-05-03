@@ -403,7 +403,7 @@ where
 /// - `https://example.com/docs/getting-started` → `Some("/docs/")`
 /// - `https://example.com/docs/`               → `Some("/docs/")`
 /// - `https://example.com/`                    → `None`
-/// - `https://example.com/page`                → `None` (single segment)
+/// - `https://example.com/page`                → `Some("/page/")`
 pub fn infer_path_prefix(url: &Url) -> Option<String> {
     let path = url.path();
 
