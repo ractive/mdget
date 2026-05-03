@@ -11,13 +11,24 @@ use url::Url;
 pub struct RobotsCache {
     /// Maps `"scheme://host"` to a parsed `Robot`, or `None` if unavailable.
     cache: HashMap<String, Option<Robot>>,
+    /// User-agent product token used when parsing robots.txt (e.g. "mdget").
+    user_agent: String,
 }
 
 impl RobotsCache {
-    pub fn new() -> Self {
+    pub fn new(user_agent: String) -> Self {
         Self {
             cache: HashMap::new(),
+            user_agent,
         }
+    }
+
+    /// Returns `true` if a robots.txt was successfully loaded for `url`'s domain.
+    pub fn has_robots(&self, url: &Url) -> bool {
+        let Some(key) = Self::domain_key(url) else {
+            return false;
+        };
+        matches!(self.cache.get(&key), Some(Some(_)))
     }
 
     /// Returns the domain key (`scheme://host:port`) for a URL.
@@ -40,7 +51,7 @@ impl RobotsCache {
         };
 
         if !self.cache.contains_key(&key) {
-            let robot = fetch_robots(client, url);
+            let robot = fetch_robots(client, url, &self.user_agent);
             self.cache.insert(key.clone(), robot);
         }
 
@@ -69,7 +80,7 @@ impl RobotsCache {
 ///
 /// Returns `None` on any error (connection failure, 4xx, 5xx, parse error).
 /// Per the robots.txt specification, an unavailable robots.txt means "allow all".
-fn fetch_robots(client: &reqwest::blocking::Client, url: &Url) -> Option<Robot> {
+fn fetch_robots(client: &reqwest::blocking::Client, url: &Url, user_agent: &str) -> Option<Robot> {
     // Build the robots.txt URL using the full authority (host + optional port).
     let authority = match url.port() {
         Some(port) => format!("{}:{}", url.host_str().unwrap_or(""), port),
@@ -89,5 +100,5 @@ fn fetch_robots(client: &reqwest::blocking::Client, url: &Url) -> Option<Robot> 
     let bytes = response.bytes().ok()?;
 
     // texting_robots::Robot::new returns anyhow::Result.
-    Robot::new("*", &bytes).ok()
+    Robot::new(user_agent, &bytes).ok()
 }

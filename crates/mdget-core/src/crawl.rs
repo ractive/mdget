@@ -83,6 +83,7 @@ pub enum CrawlProgress {
     RobotsLoaded {
         domain: String,
         delay: Option<f64>,
+        found: bool,
     },
     SitemapLoaded {
         url_count: usize,
@@ -135,25 +136,31 @@ where
     let mut effective_delay = options.delay;
 
     if !options.ignore_robots {
-        let mut cache = RobotsCache::new();
+        // Use only the product token for robots.txt matching — sites write "User-agent: mdget",
+        // not "User-agent: mdget/0.1.0".
+        let robots_ua = "mdget".to_string();
+        let mut cache = RobotsCache::new(robots_ua);
         // Pre-warm for the start URL domain.
         cache.is_allowed(&start, &aux_client);
 
+        let domain = start.host_str().unwrap_or("").to_string();
+        let found = cache.has_robots(&start);
+
         // Check if the robots.txt specifies a crawl delay higher than configured.
         if let Some(robots_delay) = cache.crawl_delay(&start) {
-            let domain = start.host_str().unwrap_or("").to_string();
-            let delay_f64 = Some(f64::from(robots_delay.as_secs_f32()));
             if robots_delay > options.delay {
                 effective_delay = robots_delay;
             }
             on_page(&CrawlProgress::RobotsLoaded {
                 domain,
-                delay: delay_f64,
+                delay: Some(robots_delay.as_secs_f64()),
+                found,
             });
         } else {
             on_page(&CrawlProgress::RobotsLoaded {
-                domain: start.host_str().unwrap_or("").to_string(),
+                domain,
                 delay: None,
+                found,
             });
         }
 
@@ -169,15 +176,12 @@ where
     // Seed the queue with the start URL.
     let start_norm = normalize_url(&start);
     visited.insert(start_norm);
-    queue.push_back((start, 0));
+    // clone needed: start is moved into the queue but still needed for sitemap fetch below
+    queue.push_back((start.clone(), 0));
 
     // --- sitemap.xml ---
     if options.use_sitemap {
-        match crate::sitemap::fetch_sitemap_urls(
-            &aux_client,
-            &Url::parse(start_url).expect("already validated"),
-            quiet,
-        ) {
+        match crate::sitemap::fetch_sitemap_urls(&aux_client, &start, quiet) {
             Ok(sitemap_urls) => {
                 let count = sitemap_urls.len();
                 on_page(&CrawlProgress::SitemapLoaded { url_count: count });

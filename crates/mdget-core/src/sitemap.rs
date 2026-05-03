@@ -124,7 +124,11 @@ fn fetch_child_sitemap(
 /// Attempts to deserialize `xml` as a `<urlset>`.  Returns loc strings.
 fn parse_urlset(xml: &str) -> Vec<String> {
     match quick_xml::de::from_str::<UrlSet>(xml) {
-        Ok(set) => set.urls.into_iter().map(|u| u.loc).collect(),
+        Ok(set) => set
+            .urls
+            .into_iter()
+            .map(|u| u.loc.trim().to_string())
+            .collect(),
         Err(_) => Vec::new(),
     }
 }
@@ -132,7 +136,11 @@ fn parse_urlset(xml: &str) -> Vec<String> {
 /// Attempts to deserialize `xml` as a `<sitemapindex>`.  Returns loc strings.
 fn parse_sitemapindex(xml: &str) -> Vec<String> {
     match quick_xml::de::from_str::<SitemapIndex>(xml) {
-        Ok(index) => index.sitemaps.into_iter().map(|e| e.loc).collect(),
+        Ok(index) => index
+            .sitemaps
+            .into_iter()
+            .map(|e| e.loc.trim().to_string())
+            .collect(),
         Err(_) => Vec::new(),
     }
 }

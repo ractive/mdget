@@ -204,7 +204,7 @@ enum Command {
             mdget crawl --max-pages 50 https://docs.example.com\n    \
             mdget crawl -O https://docs.example.com           # auto-generate filenames\n    \
             mdget crawl --output-dir ./docs https://docs.example.com  # save to directory\n    \
-            mdget crawl --sitemap --depth 0 https://docs.example.com  # sitemap URLs only\n    \
+            mdget crawl --sitemap --depth 0 https://docs.example.com  # sitemap URLs + start page\n    \
             mdget crawl --ignore-robots https://docs.example.com      # skip robots.txt"
     )]
     Crawl {
@@ -458,11 +458,19 @@ fn run_crawl(
             mdget_core::CrawlProgress::Done { total } => {
                 eprintln!("Crawl complete: {total} pages fetched");
             }
-            mdget_core::CrawlProgress::RobotsLoaded { domain, delay } => {
-                if let Some(d) = delay {
-                    eprintln!("  robots.txt loaded for {domain} (crawl-delay: {d}s)");
+            mdget_core::CrawlProgress::RobotsLoaded {
+                domain,
+                delay,
+                found,
+            } => {
+                if *found {
+                    if let Some(d) = delay {
+                        eprintln!("  robots.txt loaded for {domain} (crawl-delay: {d}s)");
+                    } else {
+                        eprintln!("  robots.txt loaded for {domain}");
+                    }
                 } else {
-                    eprintln!("  robots.txt loaded for {domain}");
+                    eprintln!("  robots.txt not found for {domain} (allowing all)");
                 }
             }
             mdget_core::CrawlProgress::SitemapLoaded { url_count } => {

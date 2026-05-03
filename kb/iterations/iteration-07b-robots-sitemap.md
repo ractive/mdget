@@ -43,7 +43,7 @@ Chosen over `robotstxt` because:
 
 Trade-off: heavier deps (`nom`, `regex`, `bstr`) but `regex` is already transitive in the workspace.
 
-### Sitemap XML: `quick-xml` (v0.39.2)
+### Sitemap XML: `quick-xml` (v0.37)
 
 - Pure Rust, single mandatory dep (`memchr`)
 - Serde support via `serialize` feature — deserialize sitemap XML directly into structs
@@ -60,7 +60,7 @@ Trade-off: heavier deps (`nom`, `regex`, `bstr`) but `regex` is already transiti
 - [x] Add `quick-xml` dependency with `serialize` feature to `mdget-core`
 - [x] Implement sitemap.xml parser: support `<urlset>` and `<sitemapindex>` (nested sitemaps)
 - [x] Add `--sitemap` flag: fetch sitemap.xml, add discovered URLs to crawl queue
-- [x] When `--sitemap` is used with `--depth 0`, fetch only sitemap URLs (no link following)
+- [x] When `--sitemap` is used with `--depth 0`, fetch sitemap URLs + start page (no link following)
 - [x] Add e2e tests: robots.txt blocking, crawl-delay, sitemap discovery
 - [x] Run quality gates
 
