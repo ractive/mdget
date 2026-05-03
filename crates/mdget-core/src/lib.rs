@@ -7,7 +7,7 @@ mod normalize;
 pub(crate) mod robots;
 pub(crate) mod sitemap;
 
-pub use crawl::{CrawlOptions, CrawlProgress, CrawlResult, crawl};
+pub use crawl::{CrawlOptions, CrawlProgress, CrawlResult, crawl, infer_path_prefix};
 pub use extract::{
     ExtractOptions, ExtractResult, Metadata, extract, format_metadata_frontmatter, strip_images,
     truncate_output, word_count,

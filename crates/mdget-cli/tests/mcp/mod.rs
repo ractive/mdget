@@ -281,7 +281,7 @@ fn mcp_tools_list() {
         .as_array()
         .expect("tools should be an array");
 
-    assert_eq!(tools.len(), 3, "expected exactly 3 tools");
+    assert_eq!(tools.len(), 4, "expected exactly 4 tools");
 
     let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
 
@@ -296,6 +296,10 @@ fn mcp_tools_list() {
     assert!(
         names.contains(&"batch_fetch"),
         "tools should include batch_fetch: {names:?}"
+    );
+    assert!(
+        names.contains(&"crawl_site"),
+        "tools should include crawl_site: {names:?}"
     );
 
     // Verify fetch_markdown has 'url' as a required property
@@ -641,6 +645,53 @@ fn mcp_batch_fetch() {
 }
 
 // ---------------------------------------------------------------------------
+// 9b. mcp_batch_fetch_metadata_fields
+// ---------------------------------------------------------------------------
+#[test]
+fn mcp_batch_fetch_metadata_fields() {
+    let mut server = Server::new();
+    let mock = server
+        .mock("GET", "/article")
+        .with_status(200)
+        .with_header("Content-Type", "text/html; charset=utf-8")
+        .with_body(TEST_HTML)
+        .create();
+
+    let url = format!("{}/article", server.url());
+    let mut client = McpClient::new();
+    let (_id, resp) = client.call_tool(
+        "batch_fetch",
+        json!({"urls": [url], "timeout": 10, "retries": 0}),
+    );
+
+    assert!(!McpClient::is_error(&resp), "should succeed: {resp:?}");
+
+    let text = McpClient::result_text(&resp);
+    let results: Vec<Value> = serde_json::from_str(text).expect("should be JSON array");
+
+    assert_eq!(results.len(), 1);
+    let result = &results[0];
+
+    // word_count should be a positive number
+    assert!(
+        result["word_count"].is_number(),
+        "word_count should be present as a number: {result}"
+    );
+    assert!(
+        result["word_count"].as_u64().unwrap_or(0) > 0,
+        "word_count should be positive: {result}"
+    );
+
+    // excerpt should be present (from meta description tag in TEST_HTML)
+    assert!(
+        result["excerpt"].is_string(),
+        "excerpt should be present: {result}"
+    );
+
+    mock.assert();
+}
+
+// ---------------------------------------------------------------------------
 // 10. mcp_batch_fetch_partial_failure
 // ---------------------------------------------------------------------------
 #[test]
@@ -874,6 +925,114 @@ fn mcp_batch_fetch_too_many_urls() {
     let text = McpClient::result_text(&resp);
     assert!(
         text.contains("at most 50") || text.contains("50"),
+        "error should mention the limit: {text}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 19. mcp_crawl_site
+// ---------------------------------------------------------------------------
+#[test]
+fn mcp_crawl_site() {
+    let page1 = r#"<!DOCTYPE html>
+<html><head><title>Docs Home</title></head>
+<body><article>
+  <h1>Docs Home</h1>
+  <p>Welcome to the documentation. This page has enough text for readability
+  extraction to work properly with the minimum content threshold.</p>
+  <p>Second paragraph with more content to ensure readability passes.</p>
+  <a href="/docs/guide">Guide</a>
+</article></body></html>"#;
+
+    let page2 = r"<!DOCTYPE html>
+<html><head><title>Guide Page</title></head>
+<body><article>
+  <h1>Guide Page</h1>
+  <p>This is the guide page with enough content for readability extraction
+  to work properly. It contains text about how to use the product.</p>
+  <p>Second paragraph with additional guide content for the threshold.</p>
+</article></body></html>";
+
+    let mut server = Server::new();
+    let _mock1 = server
+        .mock("GET", "/docs/")
+        .with_status(200)
+        .with_header("Content-Type", "text/html; charset=utf-8")
+        .with_body(page1)
+        .create();
+    let _mock2 = server
+        .mock("GET", "/docs/guide")
+        .with_status(200)
+        .with_header("Content-Type", "text/html; charset=utf-8")
+        .with_body(page2)
+        .create();
+    // robots.txt — allow all
+    let _mock_robots = server.mock("GET", "/robots.txt").with_status(404).create();
+
+    let url = format!("{}/docs/", server.url());
+    let mut client = McpClient::new();
+    let (_id, resp) = client.call_tool(
+        "crawl_site",
+        json!({"url": url, "depth": 1, "max_pages": 10, "timeout": 10}),
+    );
+
+    assert!(
+        !McpClient::is_error(&resp),
+        "crawl_site should succeed: {resp:?}"
+    );
+
+    let text = McpClient::result_text(&resp);
+    let results: Vec<Value> =
+        serde_json::from_str(text).expect("crawl_site result should be a JSON array");
+
+    assert!(
+        !results.is_empty(),
+        "crawl_site should return at least one page"
+    );
+
+    // Check first result has expected fields
+    let first = &results[0];
+    assert!(first["url"].is_string(), "result should have url field");
+    assert!(
+        first["content"].is_string(),
+        "result should have content field"
+    );
+    assert!(first["depth"].is_number(), "result should have depth field");
+}
+
+// ---------------------------------------------------------------------------
+// 20. mcp_crawl_site_invalid_url
+// ---------------------------------------------------------------------------
+#[test]
+fn mcp_crawl_site_invalid_url() {
+    let mut client = McpClient::new();
+    let (_id, resp) = client.call_tool("crawl_site", json!({"url": "not-a-url"}));
+
+    assert!(
+        McpClient::is_error(&resp),
+        "invalid URL should produce isError: true: {resp:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 21. mcp_crawl_site_max_pages_validation
+// ---------------------------------------------------------------------------
+#[test]
+fn mcp_crawl_site_max_pages_validation() {
+    let mut client = McpClient::new();
+    let (_id, resp) = client.call_tool(
+        "crawl_site",
+        json!({"url": "http://example.com", "max_pages": 201}),
+    );
+
+    assert!(
+        McpClient::is_error(&resp),
+        "max_pages > 200 should produce isError: true: {resp:?}"
+    );
+
+    let text = McpClient::result_text(&resp);
+    assert!(
+        text.contains("200"),
         "error should mention the limit: {text}"
     );
 }

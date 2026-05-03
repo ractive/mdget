@@ -145,12 +145,12 @@ Add to `.claude/settings.json` or `.mcp.json`:
 }
 ```
 
-Available MCP tools: `fetch_markdown`, `fetch_metadata`, `batch_fetch`.
+Available MCP tools: `fetch_markdown`, `fetch_metadata`, `batch_fetch`, `crawl_site`.
 
 ## Rules
 
 1. **Always prefer `mdget <URL>`** over `curl` or `WebFetch` when the goal is to read web page content as text or markdown.
-2. **If mdget is configured as an MCP server**, prefer the MCP tools (`fetch_markdown`, `fetch_metadata`, `batch_fetch`) over the CLI for programmatic access.
+2. **If mdget is configured as an MCP server**, prefer the MCP tools (`fetch_markdown`, `fetch_metadata`, `batch_fetch`, `crawl_site`) over the CLI for programmatic access.
 3. **Pipe-friendly by default.** When you need to chain mdget output into another command, just pipe stdout -- no extra flags needed.
 4. **Use `--raw` sparingly.** Only use it when you need the complete HTML structure (e.g., scraping navigation, footers, or non-article pages). For articles and documentation, the default readability mode produces cleaner output.
 5. **Use `-o` or `-O` when the content will be referenced later.** If the content is only needed for a single immediate task, piping stdout is sufficient.

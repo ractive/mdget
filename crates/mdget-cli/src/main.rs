@@ -205,7 +205,8 @@ enum Command {
             mdget crawl -O https://docs.example.com           # auto-generate filenames\n    \
             mdget crawl --output-dir ./docs https://docs.example.com  # save to directory\n    \
             mdget crawl --sitemap --depth 0 https://docs.example.com  # sitemap URLs + start page\n    \
-            mdget crawl --ignore-robots https://docs.example.com      # skip robots.txt"
+            mdget crawl --ignore-robots https://docs.example.com      # skip robots.txt\n    \
+            mdget crawl --path-prefix /docs/ https://example.com/docs/intro  # stay under /docs/"
     )]
     Crawl {
         /// Starting URL to crawl from
@@ -243,6 +244,11 @@ enum Command {
         /// Discover pages via sitemap.xml and add to crawl queue
         #[arg(long)]
         sitemap: bool,
+
+        /// Only follow links whose URL path starts with this prefix (e.g. /docs/).
+        /// Auto-inferred from start URL path when not set.
+        #[arg(long = "path-prefix", value_name = "PREFIX")]
+        path_prefix: Option<String>,
     },
     /// Start MCP (Model Context Protocol) server on stdio
     #[command(long_about = "Start an MCP server on stdio transport.\n\n\
@@ -251,7 +257,8 @@ enum Command {
         Available tools:\n  \
         - fetch_markdown: Fetch a URL and return clean markdown\n  \
         - fetch_metadata: Fetch a URL and return only YAML metadata\n  \
-        - batch_fetch: Fetch multiple URLs in parallel\n\n\
+        - batch_fetch: Fetch multiple URLs in parallel\n  \
+        - crawl_site: Crawl a website breadth-first and return all pages\n\n\
         SETUP (Claude Code):\n  \
         Add to your .claude/settings.json or .mcp.json:\n  \
         {\n    \
@@ -294,6 +301,7 @@ struct CrawlArgs<'a> {
     auto_filename: bool,
     ignore_robots: bool,
     use_sitemap: bool,
+    path_prefix: Option<&'a str>,
 }
 
 struct ProcessedInput {
@@ -316,6 +324,7 @@ fn main() -> anyhow::Result<()> {
             auto_filename,
             ignore_robots,
             sitemap,
+            path_prefix,
         }) => run_crawl(
             &CrawlArgs {
                 url,
@@ -327,6 +336,7 @@ fn main() -> anyhow::Result<()> {
                 auto_filename: *auto_filename,
                 ignore_robots: *ignore_robots,
                 use_sitemap: *sitemap,
+                path_prefix: path_prefix.as_deref(),
             },
             &cli,
         ),
@@ -417,6 +427,15 @@ fn url_to_output_path(url: &url::Url, output_dir: &str, include_host: bool) -> P
 }
 
 fn run_crawl(args: &CrawlArgs, cli: &Cli) -> anyhow::Result<()> {
+    // Compute effective path prefix: explicit flag wins; otherwise auto-infer from start URL.
+    let effective_path_prefix: Option<String> = if let Some(explicit) = args.path_prefix {
+        Some(explicit.to_string())
+    } else {
+        let start = url::Url::parse(args.url)
+            .with_context(|| format!("invalid start URL: {}", args.url))?;
+        mdget_core::infer_path_prefix(&start)
+    };
+
     let options = mdget_core::CrawlOptions {
         fetch_options: mdget_core::FetchOptions {
             timeout_secs: cli.timeout,
@@ -432,6 +451,7 @@ fn run_crawl(args: &CrawlArgs, cli: &Cli) -> anyhow::Result<()> {
         no_images: cli.no_images,
         ignore_robots: args.ignore_robots,
         use_sitemap: args.use_sitemap,
+        path_prefix: effective_path_prefix,
     };
 
     let quiet = cli.quiet;
@@ -759,6 +779,14 @@ fn run_batch(inputs: &[String], cli: &Cli) -> anyhow::Result<()> {
         })
     };
 
+    // Warn when multiple URLs are going to stdout without file output
+    if inputs.len() > 1 && cli.output.is_none() && !cli.auto_filename {
+        eprintln!(
+            "warning: multiple URLs to stdout — output is concatenated and hard to split. \
+             Use -O (auto-named files), -o FILE (single file), or the MCP batch_fetch tool instead."
+        );
+    }
+
     // Output phase: emit results in input order
     let mut had_error = false;
 
@@ -823,6 +851,13 @@ fn run_init(global: bool) -> anyhow::Result<()> {
         .with_context(|| format!("failed to write skill file: {}", skill_path.display()))?;
     eprintln!("Installed skill to {}", skill_path.display());
 
+    if claude_md_path.exists() && is_git_tracked(&claude_md_path) {
+        eprintln!(
+            "warning: {} is tracked by git — this will create uncommitted changes",
+            claude_md_path.display()
+        );
+    }
+
     upsert_managed_section(&claude_md_path)?;
     eprintln!("Updated CLAUDE.md");
 
@@ -857,6 +892,19 @@ fn run_deinit(global: bool) -> anyhow::Result<()> {
     remove_dir_if_empty(&base_dir)?;
 
     Ok(())
+}
+
+fn is_git_tracked(path: &std::path::Path) -> bool {
+    // Convert to string for git command; if it can't be converted, assume not tracked
+    let Some(path_str) = path.to_str() else {
+        return false;
+    };
+    std::process::Command::new("git")
+        .args(["ls-files", "--error-unmatch", path_str])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|s| s.success())
 }
 
 /// Returns (base_dir, claude_md_path).
