@@ -50,10 +50,10 @@ pub fn extract(html: &str, url: &Url, options: &ExtractOptions) -> anyhow::Resul
     let markdown = clean_markdown_escapes(article.text_content.as_ref());
     let markdown = strip_edit_links(&markdown);
     let markdown = clean_degenerate_tables(&markdown);
-    let title = Some(article.title.clone()).filter(|t| !t.is_empty());
+    let title = Some(article.title).filter(|t| !t.is_empty());
 
     let metadata = Metadata {
-        title: Some(article.title).filter(|t| !t.is_empty()),
+        title: title.clone(),
         byline: article.byline.filter(|s| !s.is_empty()),
         excerpt: article.excerpt.filter(|s| !s.is_empty()),
         published: article.published_time.filter(|s| !s.is_empty()),
@@ -93,10 +93,10 @@ pub fn format_metadata_frontmatter(
         let _ = writeln!(out, "excerpt: \"{}\"", yaml_escape_string(excerpt));
     }
     if let Some(ref published) = metadata.published {
-        let _ = writeln!(out, "published: {published}");
+        let _ = writeln!(out, "published: \"{}\"", yaml_escape_string(published));
     }
     if let Some(ref lang) = metadata.language {
-        let _ = writeln!(out, "language: {lang}");
+        let _ = writeln!(out, "language: \"{}\"", yaml_escape_string(lang));
     }
     if let Some(ref site_name) = metadata.site_name {
         let _ = writeln!(out, "site_name: \"{}\"", yaml_escape_string(site_name));
@@ -106,9 +106,21 @@ pub fn format_metadata_frontmatter(
     out
 }
 
-/// Escape double quotes and backslashes for YAML double-quoted strings.
+/// Escape characters that are unsafe in YAML double-quoted strings.
 fn yaml_escape_string(s: &str) -> String {
-    s.replace('\\', "\\\\").replace('"', "\\\"")
+    let mut out = String::with_capacity(s.len());
+    for ch in s.chars() {
+        match ch {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            '\0' => out.push_str("\\0"),
+            _ => out.push(ch),
+        }
+    }
+    out
 }
 
 /// Strip markdown image references (`![alt](url)`) from text.
@@ -1155,8 +1167,8 @@ mod tests {
         let result = format_metadata_frontmatter(&meta, "https://example.com/a", 100);
         assert!(result.contains("byline: \"John Doe\""));
         assert!(result.contains("excerpt: \"A short desc\""));
-        assert!(result.contains("published: 2026-04-17"));
-        assert!(result.contains("language: en"));
+        assert!(result.contains("published: \"2026-04-17\""));
+        assert!(result.contains("language: \"en\""));
         assert!(result.contains("site_name: \"Example News\""));
     }
 
@@ -1198,5 +1210,13 @@ mod tests {
     #[test]
     fn test_yaml_escape_no_change() {
         assert_eq!(yaml_escape_string("plain text"), "plain text");
+    }
+
+    #[test]
+    fn test_yaml_escape_control_characters() {
+        assert_eq!(yaml_escape_string("line1\nline2"), "line1\\nline2");
+        assert_eq!(yaml_escape_string("tab\there"), "tab\\there");
+        assert_eq!(yaml_escape_string("cr\rhere"), "cr\\rhere");
+        assert_eq!(yaml_escape_string("null\0here"), "null\\0here");
     }
 }

@@ -1,6 +1,14 @@
+use std::io::Read as _;
+
 use anyhow::Context;
 use serde::Deserialize;
 use url::Url;
+
+/// Maximum size for sitemap XML responses (5 MB).
+const MAX_SITEMAP_SIZE: usize = 5 * 1024 * 1024;
+
+/// Maximum number of child sitemaps to fetch from a sitemapindex.
+const MAX_CHILD_SITEMAPS: usize = 50;
 
 // ---------------------------------------------------------------------------
 // Deserialization structs
@@ -62,7 +70,7 @@ pub fn fetch_sitemap_urls(
     if urls.is_empty() {
         // Try as sitemapindex.
         let entries = parse_sitemapindex(&body);
-        for entry_url_str in entries {
+        for entry_url_str in entries.into_iter().take(MAX_CHILD_SITEMAPS) {
             match fetch_child_sitemap(client, &entry_url_str, quiet) {
                 Ok(child_urls) => urls.extend(child_urls),
                 Err(e) => {
@@ -104,9 +112,17 @@ fn fetch_text(client: &reqwest::blocking::Client, url: &str) -> anyhow::Result<S
         anyhow::bail!("HTTP {} fetching {url}", response.status());
     }
 
+    // Apply size limit to prevent OOM from malicious/huge sitemaps.
+    let mut body_bytes = Vec::new();
     response
-        .text()
-        .with_context(|| format!("failed to read response body from {url}"))
+        .take(MAX_SITEMAP_SIZE as u64 + 1)
+        .read_to_end(&mut body_bytes)
+        .with_context(|| format!("failed to read response body from {url}"))?;
+    if body_bytes.len() > MAX_SITEMAP_SIZE {
+        anyhow::bail!("sitemap too large (>{MAX_SITEMAP_SIZE} bytes) from: {url}");
+    }
+    String::from_utf8(body_bytes)
+        .with_context(|| format!("sitemap response is not valid UTF-8 from: {url}"))
 }
 
 fn fetch_child_sitemap(

@@ -8,24 +8,36 @@ const MAX_RESPONSE_SIZE: usize = 50 * 1024 * 1024; // 50 MB
 /// Only scan this many bytes for a meta refresh tag — it must be in <head>.
 const META_REFRESH_SCAN_BYTES: usize = 4096;
 
+/// Strip credentials from a URL for safe display in error messages and logs.
+fn sanitize_url(url: &Url) -> String {
+    if url.username().is_empty() && url.password().is_none() {
+        return url.to_string();
+    }
+    let mut sanitized = url.clone(); // clone needed: we must mutate a copy to strip credentials
+    let _ = sanitized.set_username("");
+    let _ = sanitized.set_password(None);
+    sanitized.to_string()
+}
+
 /// Read the response body with a hard size cap. Checks Content-Length first
 /// as a fast pre-flight, then enforces the limit while reading (protects
 /// against lying Content-Length or chunked-encoding).
 fn read_body_limited(response: reqwest::blocking::Response, url: &Url) -> anyhow::Result<String> {
+    let safe_url = sanitize_url(url);
     if let Some(cl) = response.content_length()
         && cl > MAX_RESPONSE_SIZE as u64
     {
         anyhow::bail!(
-            "response too large ({cl} bytes, limit is {MAX_RESPONSE_SIZE} bytes) from: {url}",
+            "response too large ({cl} bytes, limit is {MAX_RESPONSE_SIZE} bytes) from: {safe_url}",
         );
     }
     let mut body_bytes = Vec::new();
     response
         .take(MAX_RESPONSE_SIZE as u64 + 1)
         .read_to_end(&mut body_bytes)
-        .with_context(|| format!("failed to read response body from: {url}"))?;
+        .with_context(|| format!("failed to read response body from: {safe_url}"))?;
     if body_bytes.len() > MAX_RESPONSE_SIZE {
-        anyhow::bail!("response too large (>{MAX_RESPONSE_SIZE} bytes) from: {url}");
+        anyhow::bail!("response too large (>{MAX_RESPONSE_SIZE} bytes) from: {safe_url}");
     }
     Ok(String::from_utf8_lossy(&body_bytes).into_owned())
 }
@@ -127,7 +139,9 @@ fn fetch_with_retries(
 /// Returns true when the error represents a 4xx HTTP status — these should not
 /// be retried because the client sent a bad request.
 fn is_client_error(e: &anyhow::Error) -> bool {
-    e.to_string().contains("HTTP 4")
+    let msg = e.to_string();
+    // Match the exact format we produce in follow_http_redirects: "HTTP 4XX ..."
+    msg.starts_with("HTTP 4")
 }
 
 /// Performs the actual HTTP GET, follows 3xx redirects manually (up to
@@ -171,7 +185,7 @@ fn do_fetch(
         body: final_body,
         final_url,
         content_type: final_content_type,
-        redirect_chain: redirect_chain.clone(), // clone needed: caller owns redirect_chain across retries
+        redirect_chain: std::mem::take(redirect_chain),
     })
 }
 
@@ -185,10 +199,11 @@ fn follow_http_redirects(
     hops: &mut usize,
 ) -> anyhow::Result<reqwest::blocking::Response> {
     loop {
+        let safe_url = sanitize_url(current_url);
         let response = client
             .get(current_url.as_str())
             .send()
-            .with_context(|| format!("failed to fetch URL: {current_url}"))?;
+            .with_context(|| format!("failed to fetch URL: {safe_url}"))?;
 
         let status = response.status();
 
@@ -202,12 +217,10 @@ fn follow_http_redirects(
                 .headers()
                 .get(reqwest::header::LOCATION)
                 .with_context(|| {
-                    format!("redirect response missing Location header from: {current_url}")
+                    format!("redirect response missing Location header from: {safe_url}")
                 })?
                 .to_str()
-                .with_context(|| {
-                    format!("Location header is not valid UTF-8 from: {current_url}")
-                })?;
+                .with_context(|| format!("Location header is not valid UTF-8 from: {safe_url}"))?;
 
             // Resolve relative Location against the current URL.
             let next_url = current_url
@@ -225,10 +238,10 @@ fn follow_http_redirects(
 
         // Non-redirect: check for errors.
         if status.is_client_error() {
-            anyhow::bail!("HTTP {status} fetching URL: {current_url}");
+            anyhow::bail!("HTTP {status} fetching URL: {safe_url}");
         }
         if !status.is_success() {
-            anyhow::bail!("HTTP {status} fetching URL: {current_url}");
+            anyhow::bail!("HTTP {status} fetching URL: {safe_url}");
         }
 
         return Ok(response);

@@ -284,6 +284,24 @@ enum Command {
     },
 }
 
+struct CrawlArgs<'a> {
+    url: &'a str,
+    depth: u32,
+    delay: u64,
+    max_pages: usize,
+    follow_external: bool,
+    output_dir: Option<&'a str>,
+    auto_filename: bool,
+    ignore_robots: bool,
+    use_sitemap: bool,
+}
+
+struct ProcessedInput {
+    content: String,
+    title: Option<String>,
+    final_url: url::Url,
+}
+
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
@@ -299,16 +317,18 @@ fn main() -> anyhow::Result<()> {
             ignore_robots,
             sitemap,
         }) => run_crawl(
-            url,
+            &CrawlArgs {
+                url,
+                depth: *depth,
+                delay: *delay,
+                max_pages: *max_pages,
+                follow_external: *follow_external,
+                output_dir: output_dir.as_deref(),
+                auto_filename: *auto_filename,
+                ignore_robots: *ignore_robots,
+                use_sitemap: *sitemap,
+            },
             &cli,
-            *depth,
-            *delay,
-            *max_pages,
-            *follow_external,
-            output_dir.as_deref(),
-            *auto_filename,
-            *ignore_robots,
-            *sitemap,
         ),
         Some(Command::Serve) => run_serve(),
         Some(Command::Init { claude, global }) => {
@@ -396,19 +416,7 @@ fn url_to_output_path(url: &url::Url, output_dir: &str, include_host: bool) -> P
     path
 }
 
-#[allow(clippy::too_many_arguments, clippy::fn_params_excessive_bools)]
-fn run_crawl(
-    start_url: &str,
-    cli: &Cli,
-    depth: u32,
-    delay: u64,
-    max_pages: usize,
-    follow_external: bool,
-    output_dir: Option<&str>,
-    auto_filename: bool,
-    ignore_robots: bool,
-    use_sitemap: bool,
-) -> anyhow::Result<()> {
+fn run_crawl(args: &CrawlArgs, cli: &Cli) -> anyhow::Result<()> {
     let options = mdget_core::CrawlOptions {
         fetch_options: mdget_core::FetchOptions {
             timeout_secs: cli.timeout,
@@ -417,17 +425,18 @@ fn run_crawl(
             quiet: cli.quiet,
         },
         extract_options: mdget_core::ExtractOptions { raw: cli.raw },
-        max_depth: depth,
-        max_pages,
-        delay: Duration::from_secs(delay),
-        follow_external,
+        max_depth: args.depth,
+        max_pages: args.max_pages,
+        delay: Duration::from_secs(args.delay),
+        follow_external: args.follow_external,
         no_images: cli.no_images,
-        ignore_robots,
-        use_sitemap,
+        ignore_robots: args.ignore_robots,
+        use_sitemap: args.use_sitemap,
     };
 
     let quiet = cli.quiet;
-    let results = mdget_core::crawl(start_url, &options, |progress| {
+    let max_pages = args.max_pages;
+    let results = mdget_core::crawl(args.url, &options, |progress| {
         match progress {
             mdget_core::CrawlProgress::Error { url, error } => {
                 // Always show errors, even in quiet mode.
@@ -493,8 +502,8 @@ fn run_crawl(
         };
         let page_content = format!("{frontmatter}\n{}{newline}", result.markdown);
 
-        if let Some(dir) = output_dir {
-            let out_path = url_to_output_path(&result.url, dir, follow_external);
+        if let Some(dir) = args.output_dir {
+            let out_path = url_to_output_path(&result.url, dir, args.follow_external);
             if let Some(parent) = out_path.parent() {
                 std::fs::create_dir_all(parent)
                     .with_context(|| format!("failed to create directory: {}", parent.display()))?;
@@ -504,7 +513,7 @@ fn run_crawl(
             if !quiet {
                 eprintln!("Saved {}", out_path.display());
             }
-        } else if auto_filename {
+        } else if args.auto_filename {
             let filename = mdget_core::generate_filename(result.title.as_deref(), &result.url);
             std::fs::write(&filename, &page_content)
                 .with_context(|| format!("failed to write to {filename}"))?;
@@ -574,8 +583,8 @@ fn classify_input(input: &str) -> InputKind {
     }
 }
 
-/// Process a single input (URL or local file) and return (output_text, title, final_url).
-fn process_single(input: &str, cli: &Cli) -> anyhow::Result<(String, Option<String>, url::Url)> {
+/// Process a single input (URL or local file) and return the processed content.
+fn process_single(input: &str, cli: &Cli) -> anyhow::Result<ProcessedInput> {
     let fetch_result = match classify_input(input) {
         InputKind::Url(ref url) => {
             if !cli.quiet {
@@ -689,7 +698,11 @@ fn process_single(input: &str, cli: &Cli) -> anyhow::Result<(String, Option<Stri
         }
     };
 
-    Ok((final_output, title, fetch_result.final_url))
+    Ok(ProcessedInput {
+        content: final_output,
+        title,
+        final_url: fetch_result.final_url,
+    })
 }
 
 fn run_batch(inputs: &[String], cli: &Cli) -> anyhow::Result<()> {
@@ -697,63 +710,65 @@ fn run_batch(inputs: &[String], cli: &Cli) -> anyhow::Result<()> {
     let jobs = usize::try_from(cli.jobs.unwrap_or(if multi { 4 } else { 1 })).unwrap_or(4);
 
     // Process all inputs, collecting results in input order.
-    #[allow(clippy::type_complexity)]
-    let results: Vec<(&str, Result<(String, Option<String>, url::Url), String>)> =
-        if jobs <= 1 || inputs.len() <= 1 {
-            // Sequential processing
-            inputs
+    let results: Vec<(&str, Result<ProcessedInput, String>)> = if jobs <= 1 || inputs.len() <= 1 {
+        // Sequential processing
+        inputs
+            .iter()
+            .map(|input| {
+                let result = process_single(input, cli).map_err(|e| format!("{e:#}"));
+                (input.as_str(), result)
+            })
+            .collect()
+    } else {
+        // Parallel processing with std::thread::scope
+        let chunk_size = inputs.len().div_ceil(jobs);
+
+        std::thread::scope(|s| {
+            let chunks: Vec<_> = inputs.chunks(chunk_size).collect();
+            let handles: Vec<_> = chunks
                 .iter()
-                .map(|input| {
-                    let result = process_single(input, cli).map_err(|e| format!("{e:#}"));
-                    (input.as_str(), result)
-                })
-                .collect()
-        } else {
-            // Parallel processing with std::thread::scope
-            let chunk_size = inputs.len().div_ceil(jobs);
-
-            std::thread::scope(|s| {
-                let chunks: Vec<_> = inputs.chunks(chunk_size).collect();
-                let handles: Vec<_> = chunks
-                    .iter()
-                    .map(|chunk| {
-                        s.spawn(|| {
-                            chunk
-                                .iter()
-                                .map(|input| {
-                                    let result =
-                                        process_single(input, cli).map_err(|e| format!("{e:#}"));
-                                    (input.as_str(), result)
-                                })
-                                .collect::<Vec<_>>()
-                        })
+                .map(|chunk| {
+                    s.spawn(|| {
+                        chunk
+                            .iter()
+                            .map(|input| {
+                                let result =
+                                    process_single(input, cli).map_err(|e| format!("{e:#}"));
+                                (input.as_str(), result)
+                            })
+                            .collect::<Vec<_>>()
                     })
-                    .collect();
+                })
+                .collect();
 
-                let mut results = Vec::with_capacity(inputs.len());
-                for (handle, chunk) in handles.into_iter().zip(chunks.iter()) {
-                    if let Ok(chunk_results) = handle.join() {
-                        results.extend(chunk_results);
-                    } else {
-                        eprintln!("Error: a processing thread panicked unexpectedly");
-                        for input in *chunk {
-                            results.push((
-                                input.as_str(),
-                                Err("processing thread panicked".to_string()),
-                            ));
-                        }
+            let mut results = Vec::with_capacity(inputs.len());
+            for (handle, chunk) in handles.into_iter().zip(chunks.iter()) {
+                if let Ok(chunk_results) = handle.join() {
+                    results.extend(chunk_results);
+                } else {
+                    eprintln!("Error: a processing thread panicked unexpectedly");
+                    for input in *chunk {
+                        results.push((
+                            input.as_str(),
+                            Err("processing thread panicked".to_string()),
+                        ));
                     }
                 }
-                results
-            })
-        };
+            }
+            results
+        })
+    };
 
     // Output phase: emit results in input order
     let mut had_error = false;
 
     for (i, (input, result)) in results.iter().enumerate() {
         match result {
-            Ok((content, title, final_url)) => {
+            Ok(ProcessedInput {
+                content,
+                title,
+                final_url,
+            }) => {
                 if multi && i > 0 {
                     println!("\n---\n");
                 }
@@ -1004,4 +1019,84 @@ fn remove_dir_if_empty(dir: &std::path::Path) -> anyhow::Result<()> {
         eprintln!("Removed directory {}", dir.display());
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_output_path_root_url() {
+        let url = url::Url::parse("https://example.com/").unwrap();
+        let path = url_to_output_path(&url, "/out", false);
+        assert_eq!(path, PathBuf::from("/out/index.md"));
+    }
+
+    #[test]
+    fn test_output_path_simple_page() {
+        let url = url::Url::parse("https://example.com/about").unwrap();
+        let path = url_to_output_path(&url, "/out", false);
+        assert_eq!(path, PathBuf::from("/out/about.md"));
+    }
+
+    #[test]
+    fn test_output_path_nested() {
+        let url = url::Url::parse("https://example.com/docs/api/reference").unwrap();
+        let path = url_to_output_path(&url, "/out", false);
+        assert_eq!(path, PathBuf::from("/out/docs/api/reference.md"));
+    }
+
+    #[test]
+    fn test_output_path_trailing_slash() {
+        let url = url::Url::parse("https://example.com/docs/").unwrap();
+        let path = url_to_output_path(&url, "/out", false);
+        assert_eq!(path, PathBuf::from("/out/docs/index.md"));
+    }
+
+    #[test]
+    fn test_output_path_with_host() {
+        let url = url::Url::parse("https://example.com/page").unwrap();
+        let path = url_to_output_path(&url, "/out", true);
+        assert_eq!(path, PathBuf::from("/out/example.com/page.md"));
+    }
+
+    #[test]
+    fn test_output_path_filters_dotdot() {
+        let url = url::Url::parse("https://example.com/../../etc/passwd").unwrap();
+        let path = url_to_output_path(&url, "/out", false);
+        // ".." segments should be filtered out
+        assert!(path.starts_with("/out"));
+        assert!(!path.to_string_lossy().contains(".."));
+    }
+
+    #[test]
+    fn test_output_path_filters_dot() {
+        let url = url::Url::parse("https://example.com/./page").unwrap();
+        let path = url_to_output_path(&url, "/out", false);
+        assert!(path.starts_with("/out"));
+        assert_eq!(path, PathBuf::from("/out/page.md"));
+    }
+
+    #[test]
+    fn test_output_path_replaces_extension() {
+        let url = url::Url::parse("https://example.com/page.html").unwrap();
+        let path = url_to_output_path(&url, "/out", false);
+        assert_eq!(path, PathBuf::from("/out/page.md"));
+    }
+
+    #[test]
+    fn test_output_path_empty_path() {
+        let url = url::Url::parse("https://example.com").unwrap();
+        let path = url_to_output_path(&url, "/out", false);
+        assert_eq!(path, PathBuf::from("/out/index.md"));
+    }
+
+    #[test]
+    fn test_output_path_encoded_traversal() {
+        // %2e%2e is decoded to ".." by the url crate, so should also be filtered
+        let url = url::Url::parse("https://example.com/%2e%2e/etc/passwd").unwrap();
+        let path = url_to_output_path(&url, "/out", false);
+        assert!(path.starts_with("/out"));
+        assert!(!path.to_string_lossy().contains(".."));
+    }
 }

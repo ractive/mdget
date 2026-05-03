@@ -110,10 +110,12 @@ where
         anyhow::bail!("unsupported URL scheme '{scheme}' — only http and https are supported");
     }
 
-    let mut start_host = start
+    let start_host = start
         .host_str()
         .with_context(|| format!("start URL has no host: {start_url}"))?
         .to_lowercase();
+    let mut accepted_hosts: HashSet<String> = HashSet::new();
+    accepted_hosts.insert(start_host.clone());
 
     let user_agent = options
         .fetch_options
@@ -262,12 +264,13 @@ where
         let final_norm = normalize_url(final_url);
         visited.insert(final_norm);
 
-        // After a redirect, update the host filter to use the final destination's host.
-        // This handles cases like example.com → www.example.com.
+        // After a redirect on the first page, also accept the destination host.
+        // This handles legitimate cases like example.com → www.example.com without
+        // allowing a malicious redirect to hijack the host filter entirely.
         if results.is_empty()
             && let Some(host) = final_url.host_str()
         {
-            start_host = host.to_lowercase();
+            accepted_hosts.insert(host.to_lowercase());
         }
 
         // Extract links from the raw HTML before readability strips navigation.
@@ -277,7 +280,7 @@ where
                 // Filter by host unless follow_external is set.
                 if !options.follow_external {
                     let link_host = link.host_str().unwrap_or("").to_lowercase();
-                    if link_host != start_host {
+                    if !accepted_hosts.contains(&link_host) {
                         continue;
                     }
                 }
