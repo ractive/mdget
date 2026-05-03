@@ -35,6 +35,10 @@ pub struct FetchMarkdownParams {
 
     /// Retry count for transient errors like 5xx, timeouts (default 2)
     pub retries: Option<u32>,
+
+    /// Override the User-Agent header for this request
+    #[serde(default)]
+    pub user_agent: Option<String>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -74,6 +78,49 @@ pub struct BatchFetchParams {
 
     /// Retry count for transient errors like 5xx, timeouts (default 2)
     pub retries: Option<u32>,
+
+    /// Override the User-Agent header for this request
+    #[serde(default)]
+    pub user_agent: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct CrawlSiteParams {
+    /// Starting URL to crawl from (must be http or https)
+    pub url: String,
+
+    /// Maximum link depth to follow (0 = start page only, default 1)
+    pub depth: Option<u32>,
+
+    /// Maximum number of pages to fetch (default 20, max 200)
+    pub max_pages: Option<usize>,
+
+    /// Seconds to wait between requests (default 1)
+    pub delay: Option<u64>,
+
+    /// Only follow links whose URL path starts with this prefix (e.g. /docs/).
+    /// Auto-inferred from start URL when not set.
+    pub path_prefix: Option<String>,
+
+    /// Include YAML frontmatter metadata in each page's content
+    #[serde(default)]
+    pub include_metadata: bool,
+
+    /// HTTP timeout in seconds per request (default 30)
+    pub timeout: Option<u64>,
+}
+
+// ── Result types ────────────────────────────────────────────────────────
+
+#[derive(Debug, Serialize)]
+struct CrawlSiteResult {
+    url: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    title: Option<String>,
+    content: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    word_count: Option<usize>,
+    depth: u32,
 }
 
 // ── Batch result type ───────────────────────────────────────────────────
@@ -85,6 +132,14 @@ struct BatchResult {
     title: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     content: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    word_count: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    excerpt: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    language: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    byline: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<String>,
 }
@@ -122,7 +177,7 @@ impl MdgetServer {
             timeout_secs: params.timeout.unwrap_or(30),
             retries: params.retries.unwrap_or(2),
             quiet: true,
-            ..Default::default()
+            user_agent: params.user_agent,
         };
 
         // `mdget_core::fetch` uses `reqwest::blocking` which must not run on a
@@ -203,7 +258,7 @@ impl MdgetServer {
     /// contains the URL, content (or error), and title.
     #[tool(
         name = "batch_fetch",
-        description = "Fetch multiple web pages in parallel and return all results. Each result contains the URL, title, and either content or error message."
+        description = "Fetch multiple web pages in parallel and return all results. Each result contains url, title, content (or error), plus metadata: word_count, excerpt, language, byline."
     )]
     fn batch_fetch(
         &self,
@@ -234,7 +289,7 @@ impl MdgetServer {
             timeout_secs: params.timeout.unwrap_or(30),
             retries: params.retries.unwrap_or(2),
             quiet: true,
-            ..Default::default()
+            user_agent: params.user_agent,
         };
 
         let results: Vec<BatchResult> = std::thread::scope(|s| {
@@ -260,11 +315,97 @@ impl MdgetServer {
                         url: String::from("<unknown>"),
                         title: None,
                         content: None,
+                        word_count: None,
+                        excerpt: None,
+                        language: None,
+                        byline: None,
                         error: Some("processing thread panicked".to_string()),
                     })
                 })
                 .collect()
         });
+
+        serde_json::to_string_pretty(&results)
+            .map_err(|e| format!("failed to serialize results: {e}"))
+    }
+
+    /// Crawl a website breadth-first, following links up to a configurable depth.
+    /// Returns an array of pages with URL, title, content, and word count.
+    #[tool(
+        name = "crawl_site",
+        description = "Crawl a website breadth-first, following links up to a configurable depth. Returns an array of {url, title, content, word_count, depth} results. Great for exploring documentation sites."
+    )]
+    fn crawl_site(
+        &self,
+        Parameters(params): Parameters<CrawlSiteParams>,
+    ) -> Result<String, String> {
+        validate_url(&params.url)?;
+        if let Some(t) = params.timeout {
+            validate_timeout(t)?;
+        }
+
+        let max_pages = params.max_pages.unwrap_or(20);
+        if max_pages == 0 {
+            return Err("max_pages must be greater than 0".to_string());
+        }
+        if max_pages > 200 {
+            return Err("max_pages must be 200 or less".to_string());
+        }
+
+        let depth = params.depth.unwrap_or(1);
+        let delay = params.delay.unwrap_or(1);
+
+        // Auto-infer path prefix from start URL if not explicitly set
+        let path_prefix = if params.path_prefix.is_some() {
+            params.path_prefix
+        } else {
+            url::Url::parse(&params.url)
+                .ok()
+                .and_then(|u| mdget_core::infer_path_prefix(&u))
+        };
+
+        let options = mdget_core::CrawlOptions {
+            fetch_options: mdget_core::FetchOptions {
+                timeout_secs: params.timeout.unwrap_or(30),
+                quiet: true,
+                ..Default::default()
+            },
+            extract_options: mdget_core::ExtractOptions { raw: false },
+            max_depth: depth,
+            max_pages,
+            delay: std::time::Duration::from_secs(delay),
+            no_images: true, // agents don't need images
+            path_prefix,
+            ..Default::default()
+        };
+
+        let crawl_results =
+            tokio::task::block_in_place(|| mdget_core::crawl(&params.url, &options, |_| {}))
+                .map_err(format_error)?;
+
+        let results: Vec<CrawlSiteResult> = crawl_results
+            .into_iter()
+            .map(|r| {
+                let content = if params.include_metadata {
+                    let frontmatter = mdget_core::format_metadata_frontmatter(
+                        &r.metadata,
+                        r.url.as_str(),
+                        r.word_count,
+                    );
+                    format!("{frontmatter}\n{}", r.markdown)
+                } else {
+                    r.markdown
+                };
+
+                CrawlSiteResult {
+                    url: r.url.to_string(),
+                    title: r.title,
+                    content,
+                    word_count: Some(r.word_count),
+                    depth: r.depth,
+                }
+            })
+            .collect();
 
         serde_json::to_string_pretty(&results)
             .map_err(|e| format!("failed to serialize results: {e}"))
@@ -281,7 +422,8 @@ impl ServerHandler for MdgetServer {
             .with_instructions(
                 "Fetch web pages and convert them to clean markdown. \
                  Tools: fetch_markdown (single URL), fetch_metadata (YAML metadata only), \
-                 batch_fetch (multiple URLs in parallel).",
+                 batch_fetch (multiple URLs in parallel), \
+                 crawl_site (crawl a website breadth-first).",
             )
     }
 }
@@ -406,6 +548,10 @@ fn process_single_url(
                 url: url.to_string(),
                 title: None,
                 content: None,
+                word_count: None,
+                excerpt: None,
+                language: None,
+                byline: None,
                 error: Some(format_error(e)),
             };
         }
@@ -418,6 +564,10 @@ fn process_single_url(
                 url: url.to_string(),
                 title: None,
                 content: None,
+                word_count: None,
+                excerpt: None,
+                language: None,
+                byline: None,
                 error: Some(e),
             };
         }
@@ -449,6 +599,10 @@ fn process_single_url(
         url: url.to_string(),
         title,
         content: Some(content),
+        word_count: Some(wc),
+        excerpt: metadata.excerpt,
+        language: metadata.language,
+        byline: metadata.byline,
         error: None,
     }
 }

@@ -55,7 +55,10 @@ pub fn extract(html: &str, url: &Url, options: &ExtractOptions) -> anyhow::Resul
     let metadata = Metadata {
         title: title.clone(),
         byline: article.byline.filter(|s| !s.is_empty()),
-        excerpt: article.excerpt.filter(|s| !s.is_empty()),
+        excerpt: article
+            .excerpt
+            .filter(|s| !s.is_empty())
+            .or_else(|| extract_meta_description(html)),
         published: article.published_time.filter(|s| !s.is_empty()),
         language: article.lang.filter(|s| !s.is_empty()),
         site_name: article.site_name.filter(|s| !s.is_empty()),
@@ -515,6 +518,138 @@ fn match_plain_edit_link(s: &str, pos: usize) -> Option<usize> {
 /// Returns true if `url` contains `action=edit` as a query parameter fragment.
 fn is_edit_action_url(url: &str) -> bool {
     url.contains("action=edit")
+}
+
+// ── Meta description extraction ──────────────────────────────────────────────
+
+/// Extract a description from `<meta>` tags in raw HTML.
+///
+/// Checks (in priority order):
+/// 1. `<meta name="description" content="...">`
+/// 2. `<meta property="og:description" content="...">`
+///
+/// Returns `None` if neither is found or the value is empty.
+fn extract_meta_description(html: &str) -> Option<String> {
+    let bytes = html.as_bytes();
+    let len = bytes.len();
+    let mut i = 0;
+
+    let mut og_description: Option<String> = None;
+
+    while i < len {
+        // Find next `<meta` (case-insensitive).
+        let Some(meta_pos) = find_icase_in_bytes(bytes, i, b"<meta") else {
+            break;
+        };
+
+        // Advance past `<meta`.
+        i = meta_pos + 5;
+
+        // Find the closing `>` of this tag.
+        let Some(close_pos) = bytes[i..].iter().position(|&b| b == b'>') else {
+            break;
+        };
+        let tag = &html[i..i + close_pos];
+        i += close_pos + 1;
+
+        // Extract the `name` and `property` attribute values from this tag.
+        let name_val = attr_value(tag, "name");
+        let property_val = attr_value(tag, "property");
+        let content_val = attr_value(tag, "content");
+
+        let content = match content_val {
+            Some(c) if !c.is_empty() => c,
+            _ => continue,
+        };
+
+        if name_val.is_some_and(|n| n.eq_ignore_ascii_case("description")) {
+            // name="description" has highest priority — return immediately.
+            return Some(content.to_owned());
+        }
+
+        if property_val.is_some_and(|p| p.eq_ignore_ascii_case("og:description"))
+            && og_description.is_none()
+        {
+            // clone needed: we keep scanning for a possible name="description"
+            og_description = Some(content.to_owned());
+        }
+    }
+
+    og_description
+}
+
+/// Find `needle` (ASCII bytes, matched case-insensitively) in `haystack`
+/// starting at byte offset `from`. Returns the byte offset of the match start,
+/// or `None`.
+fn find_icase_in_bytes(haystack: &[u8], from: usize, needle: &[u8]) -> Option<usize> {
+    let nlen = needle.len();
+    if from + nlen > haystack.len() {
+        return None;
+    }
+    'outer: for i in from..=(haystack.len() - nlen) {
+        for (j, &nb) in needle.iter().enumerate() {
+            if !haystack[i + j].eq_ignore_ascii_case(&nb) {
+                continue 'outer;
+            }
+        }
+        return Some(i);
+    }
+    None
+}
+
+/// Extract the value of the named attribute from the interior of an HTML tag
+/// (i.e. the text *after* `<tagname` and *before* `>`).
+///
+/// Handles both double-quoted (`attr="value"`) and single-quoted (`attr='value'`)
+/// forms, and is case-insensitive on the attribute name. Returns `None` if the
+/// attribute is absent.
+fn attr_value<'a>(tag: &'a str, attr: &str) -> Option<&'a str> {
+    let bytes = tag.as_bytes();
+    let len = bytes.len();
+    let needle = attr.as_bytes();
+    let mut i = 0;
+
+    while i < len {
+        // Find next occurrence of the attribute name (case-insensitive).
+        let attr_pos = find_icase_in_bytes(bytes, i, needle)?;
+
+        i = attr_pos + needle.len();
+
+        // Skip whitespace after the attribute name.
+        while i < len && bytes[i] == b' ' {
+            i += 1;
+        }
+
+        // Must be followed by `=`.
+        if i >= len || bytes[i] != b'=' {
+            // This occurrence is part of a longer word (e.g. "property" when
+            // searching for "name"), or not an attribute — keep scanning.
+            continue;
+        }
+        i += 1; // skip `=`
+
+        // Skip whitespace.
+        while i < len && bytes[i] == b' ' {
+            i += 1;
+        }
+
+        if i >= len {
+            return None;
+        }
+
+        // Accept double-quote or single-quote.
+        let quote = bytes[i];
+        if quote != b'"' && quote != b'\'' {
+            continue;
+        }
+        i += 1; // skip opening quote
+
+        let value_start = i;
+        let close = tag[i..].find(quote as char)?;
+        return Some(&tag[value_start..value_start + close]);
+    }
+
+    None
 }
 
 // ── Table heuristic ──────────────────────────────────────────────────────────
@@ -1203,6 +1338,79 @@ mod tests {
         };
         let result = format_metadata_frontmatter(&meta, "https://example.com", 0);
         assert!(result.contains("title: \"Untitled\""));
+    }
+
+    // --- extract_meta_description unit tests ---
+
+    #[test]
+    fn test_meta_description_name() {
+        let html = r#"<html><head><meta name="description" content="A great page"></head></html>"#;
+        assert_eq!(
+            extract_meta_description(html),
+            Some("A great page".to_string())
+        );
+    }
+
+    #[test]
+    fn test_meta_description_og() {
+        let html = r#"<html><head><meta property="og:description" content="OG description"></head></html>"#;
+        assert_eq!(
+            extract_meta_description(html),
+            Some("OG description".to_string())
+        );
+    }
+
+    #[test]
+    fn test_meta_description_prefers_name_over_og() {
+        let html = r#"<html><head>
+            <meta property="og:description" content="OG desc">
+            <meta name="description" content="Name desc">
+        </head></html>"#;
+        assert_eq!(
+            extract_meta_description(html),
+            Some("Name desc".to_string())
+        );
+    }
+
+    #[test]
+    fn test_meta_description_prefers_name_over_og_reversed_order() {
+        // name="description" appears after og:description — still wins.
+        let html = r#"<html><head>
+            <meta name="description" content="Name desc">
+            <meta property="og:description" content="OG desc">
+        </head></html>"#;
+        assert_eq!(
+            extract_meta_description(html),
+            Some("Name desc".to_string())
+        );
+    }
+
+    #[test]
+    fn test_meta_description_none_when_absent() {
+        let html = r"<html><head><title>No Meta</title></head></html>";
+        assert_eq!(extract_meta_description(html), None);
+    }
+
+    #[test]
+    fn test_meta_description_none_when_content_empty() {
+        let html = r#"<html><head><meta name="description" content=""></head></html>"#;
+        assert_eq!(extract_meta_description(html), None);
+    }
+
+    #[test]
+    fn test_meta_description_single_quotes() {
+        let html = r"<html><head><meta name='description' content='Single quoted'></head></html>";
+        assert_eq!(
+            extract_meta_description(html),
+            Some("Single quoted".to_string())
+        );
+    }
+
+    #[test]
+    fn test_meta_description_content_before_name() {
+        // content attribute comes before name attribute in tag.
+        let html = r#"<html><head><meta content="value" name="description"></head></html>"#;
+        assert_eq!(extract_meta_description(html), Some("value".to_string()));
     }
 
     // --- yaml_escape_string unit tests ---

@@ -6,7 +6,7 @@ use url::Url;
 
 use crate::extract::{ExtractOptions, Metadata, extract, strip_images, word_count};
 use crate::fetch::{FetchOptions, fetch};
-use crate::links::extract_links;
+use crate::links::{extract_links, is_static_asset_url};
 use crate::normalize::normalize_url;
 use crate::robots::RobotsCache;
 
@@ -28,6 +28,9 @@ pub struct CrawlOptions {
     pub ignore_robots: bool,
     /// If true, fetch sitemap.xml and seed the crawl queue. Default: false.
     pub use_sitemap: bool,
+    /// Optional path prefix to restrict crawling. Only URLs whose path starts
+    /// with this prefix will be followed. Example: `/docs/`.
+    pub path_prefix: Option<String>,
 }
 
 impl Default for CrawlOptions {
@@ -42,6 +45,7 @@ impl Default for CrawlOptions {
             no_images: false,
             ignore_robots: false,
             use_sitemap: false,
+            path_prefix: None,
         }
     }
 }
@@ -189,6 +193,12 @@ where
                 on_page(&CrawlProgress::SitemapLoaded { url_count: count });
 
                 for su in sitemap_urls {
+                    // Filter by path prefix if set.
+                    if let Some(ref prefix) = options.path_prefix
+                        && !su.path().starts_with(prefix.as_str())
+                    {
+                        continue;
+                    }
                     // Apply robots check.
                     if let Some(ref mut cache) = robots_cache
                         && !cache.is_allowed(&su, &aux_client)
@@ -228,6 +238,15 @@ where
             on_page(&CrawlProgress::Skipped {
                 url: url.to_string(),
                 reason: "blocked by robots.txt".to_string(),
+            });
+            continue;
+        }
+
+        // Skip static assets (fonts, CSS, JS, images, etc.) before fetching.
+        if is_static_asset_url(&url) {
+            on_page(&CrawlProgress::Skipped {
+                url: url.to_string(),
+                reason: "static asset URL".to_string(),
             });
             continue;
         }
@@ -277,12 +296,24 @@ where
         if depth < options.max_depth {
             let discovered = extract_links(raw_html, final_url);
             for link in discovered {
+                // Filter by path prefix if set.
+                if let Some(ref prefix) = options.path_prefix
+                    && !link.path().starts_with(prefix.as_str())
+                {
+                    continue;
+                }
+
                 // Filter by host unless follow_external is set.
                 if !options.follow_external {
                     let link_host = link.host_str().unwrap_or("").to_lowercase();
                     if !accepted_hosts.contains(&link_host) {
                         continue;
                     }
+                }
+
+                // Silently skip static assets before queuing.
+                if is_static_asset_url(&link) {
+                    continue;
                 }
 
                 // Check robots.txt before queuing.
@@ -351,6 +382,41 @@ where
     Ok(results)
 }
 
+/// Infer a path prefix to restrict crawling from the start URL.
+///
+/// Takes the path up to and including the last `/` before the final path
+/// segment. If the result would be `/` (root), returns `None` — no restriction.
+///
+/// Examples:
+/// - `https://example.com/docs/getting-started` → `Some("/docs/")`
+/// - `https://example.com/docs/`               → `Some("/docs/")`
+/// - `https://example.com/`                    → `None`
+/// - `https://example.com/page`                → `None` (single segment)
+pub fn infer_path_prefix(url: &Url) -> Option<String> {
+    let path = url.path();
+
+    // A trailing-slash URL like /docs/ means "this directory" — the entire path
+    // is the prefix.
+    if path.ends_with('/') {
+        return if path == "/" {
+            None
+        } else {
+            Some(path.to_string())
+        };
+    }
+
+    // For paths like /docs/getting-started, find the parent directory.
+    let last_slash = path.rfind('/')?;
+    let prefix = &path[..=last_slash];
+
+    // If the prefix is just '/', no meaningful restriction (single segment like /page).
+    if prefix == "/" {
+        return None;
+    }
+
+    Some(prefix.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -375,5 +441,41 @@ mod tests {
             err.to_string().contains("invalid start URL"),
             "unexpected error: {err}"
         );
+    }
+
+    #[test]
+    fn infer_path_prefix_nested_page() {
+        let url = Url::parse("https://example.com/docs/getting-started").unwrap();
+        assert_eq!(infer_path_prefix(&url), Some("/docs/".to_string()));
+    }
+
+    #[test]
+    fn infer_path_prefix_trailing_slash() {
+        let url = Url::parse("https://example.com/docs/").unwrap();
+        assert_eq!(infer_path_prefix(&url), Some("/docs/".to_string()));
+    }
+
+    #[test]
+    fn infer_path_prefix_root() {
+        let url = Url::parse("https://example.com/").unwrap();
+        assert_eq!(infer_path_prefix(&url), None);
+    }
+
+    #[test]
+    fn infer_path_prefix_no_path() {
+        let url = Url::parse("https://example.com").unwrap();
+        assert_eq!(infer_path_prefix(&url), None);
+    }
+
+    #[test]
+    fn infer_path_prefix_single_segment() {
+        let url = Url::parse("https://example.com/page").unwrap();
+        assert_eq!(infer_path_prefix(&url), None);
+    }
+
+    #[test]
+    fn infer_path_prefix_deep_nesting() {
+        let url = Url::parse("https://example.com/a/b/c/page").unwrap();
+        assert_eq!(infer_path_prefix(&url), Some("/a/b/c/".to_string()));
     }
 }
