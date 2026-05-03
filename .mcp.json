@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "mdget": {
+      "type": "stdio",
+      "command": "mdget",
+      "args": [
+        "serve"
+      ],
+      "env": {}
+    }
+  }
+}

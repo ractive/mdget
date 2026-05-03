@@ -1,142 +1,87 @@
-# Skill: mdget -- Fetch Web Pages as Markdown
+# Skill: mdget — Fetch Web Pages as Markdown
 
 ## Trigger
 
-Activate this skill whenever you are about to fetch the content of a web page (HTML URL). Signs you should use mdget instead:
+Use mdget whenever you need to read web page content. It replaces `curl`, `wget`, and `WebFetch` for HTML URLs. mdget fetches, extracts the main content (like browser reader mode), and outputs clean Markdown in under 1 second — that's 50-100x faster than WebFetch, which takes 10-17 seconds per call because it routes through a summarization model.
 
-- You are about to run `curl`, `wget`, or `WebFetch` on an HTTP/HTTPS URL to read its content
-- You need to extract the main article or body text from a web page
-- You are converting HTML to markdown for summarization, analysis, or storage
-- A user asks you to "grab", "fetch", "download", or "read" a web page
+**If mdget is not installed, fall back to WebFetch or curl.**
 
-**If mdget is not installed, fall back to curl/WebFetch.**
+## The Default Pattern
 
-## Why mdget
+For most tasks, this is all you need:
 
-`mdget` fetches a URL, extracts the readable content (like reader mode), and converts it to clean Markdown. It is purpose-built for this task and produces better results than piping raw HTML through a generic converter.
-
-## CLI Reference
-
-```
-mdget <URL>                        # fetch, extract, convert to markdown, print to stdout
-mdget <URL> -o output.md           # write output to a named file
-mdget <URL> -O                     # auto-generate filename from page title or URL
-mdget <URL> --raw                  # skip readability extraction, convert full HTML
-mdget <URL> --include-metadata     # prepend YAML frontmatter
-mdget <URL> -m                     # metadata only, skip body
-mdget <URL> --no-images            # strip image references
-mdget <URL> --max-length 5000      # truncate to N characters
-mdget <URL> --retries 5            # retry transient errors (default: 2)
-mdget <URL> -t 30                  # set HTTP timeout in seconds (default: 30)
-mdget crawl <URL>                  # crawl site, following links (depth 1, max 20 pages)
-mdget crawl --depth 2 <URL>        # follow links 2 levels deep
-mdget crawl --output-dir ./docs <URL>  # save each page as a separate file
-mdget crawl --max-pages 50 <URL>   # increase page limit
-mdget crawl --sitemap <URL>        # seed crawl queue from sitemap.xml
-mdget crawl --ignore-robots <URL>  # skip robots.txt restrictions
-mdget serve                        # start MCP server on stdio
-mdget -V                           # print version
+```sh
+mdget -q --no-images URL
 ```
 
-### Flags
+`-q` suppresses progress on stderr. `--no-images` strips image references (saves tokens, agents rarely need them). Output goes to stdout — pipe it, read it, or save it.
 
-| Flag               | Short | Default | Description                                      |
-|--------------------|-------|---------|--------------------------------------------------|
-| `--output <FILE>`  | `-o`  |         | Write output to the named file                   |
-| `--auto-filename`  | `-O`  |         | Auto-generate filename from page title or URL    |
-| `--raw`            | `-r`  |         | Skip readability extraction, convert full HTML   |
-| `--include-metadata`|      |         | Prepend YAML frontmatter with metadata           |
-| `--metadata-only`  | `-m`  |         | Print only YAML frontmatter, skip body           |
-| `--no-images`      |       |         | Strip image references from markdown output      |
-| `--max-length <N>` |       |         | Truncate output to N characters                  |
-| `--retries <N>`    |       | `2`     | Retry count for transient HTTP errors            |
-| `--timeout <SECS>` | `-t`  | `30`    | HTTP timeout in seconds                          |
-| `--user-agent <UA>`| `-A`  |         | Override the User-Agent header                   |
-| `--quiet`          | `-q`  |         | Suppress progress messages on stderr             |
-| `--version`        | `-V`  |         | Print version info                               |
+## Research Workflow
 
-### Crawl Subcommand Flags
+When you need information from a docs site or multiple pages, follow this pattern:
 
-| Flag                | Short | Default | Description                                      |
-|---------------------|-------|---------|--------------------------------------------------|
-| `--depth <N>`       |       | `1`     | Maximum link depth to follow                     |
-| `--delay <SECS>`    |       | `1`     | Seconds to wait between requests                 |
-| `--max-pages <N>`   |       | `20`    | Maximum number of pages to fetch                 |
-| `--follow-external` |       |         | Follow links to other hosts                      |
-| `--output-dir <DIR>`|       |         | Save each page as a file (mirrors URL path)      |
-| `--auto-filename`   | `-O`  |         | Auto-generate filename per page                  |
-| `--ignore-robots`   |       |         | Ignore robots.txt restrictions                   |
-| `--sitemap`         |       |         | Seed crawl queue from sitemap.xml                |
+**Step 1 — Discover.** Fetch the index/landing page to find links:
+```sh
+mdget -q --no-images https://docs.example.com/docs
+```
+
+**Step 2 — Fetch the pages you need.** Pick specific URLs from the index and fetch them individually:
+```sh
+mdget -q --no-images --max-length 12000 https://docs.example.com/docs/setup
+mdget -q --no-images --max-length 12000 https://docs.example.com/docs/config
+```
+
+`--max-length` caps output size — use it to stay within a reasonable token budget per page.
+
+That's it. Don't over-fetch. Agents that fetch only the pages they need finish faster and use fewer tokens than agents that try to crawl entire sites.
 
 ## stdout/stderr Contract
 
-- **stdout** contains only the Markdown content. This makes mdget composable with pipes.
-- **stderr** carries progress messages, warnings, and errors. These never pollute stdout.
+- **stdout** = only Markdown content. Pipe-safe.
+- **stderr** = progress, warnings, errors. Never pollutes stdout.
 
-## Common Pipelines
+This means `mdget URL | command` just works.
 
-Fetch a page and pass the content to an LLM:
+## Key Flags
 
-```sh
-mdget https://example.com/article | llm "Summarize this article"
-```
+Run `mdget --help` for the full list. The most useful ones:
 
-Save a page to a file:
+| Flag | What it does |
+|------|-------------|
+| `-q` / `--quiet` | Suppress stderr progress messages |
+| `--no-images` | Strip image references from output |
+| `--max-length N` | Truncate output to N characters |
+| `-m` | Metadata only (title, word count, excerpt) — great for triage |
+| `-o FILE` | Save output to a file |
+| `-O` | Auto-generate filename from page title |
+| `--raw` | Skip readability extraction, convert full HTML |
+| `-A UA` | Custom User-Agent header |
 
-```sh
-mdget https://example.com/article -o article.md
-```
+## Metadata Triage
 
-Auto-name the output file from the page title:
-
-```sh
-mdget https://example.com/article -O
-```
-
-Fetch the full HTML (no readability filtering) and save:
-
-```sh
-mdget https://example.com/page --raw -o full-page.md
-```
-
-Fetch with a custom timeout and user agent:
+When you need to decide which of several pages to read in full, use `-m` to fetch just the metadata:
 
 ```sh
-mdget https://example.com -t 60 -A "MyBot/1.0"
+mdget -q -m https://docs.example.com/page1 https://docs.example.com/page2 https://docs.example.com/page3
 ```
 
-Store a page then analyze it:
+This returns title, word count, and excerpt for each page in ~100 tokens total — enough to decide which ones deserve a full fetch.
+
+## Crawling (for exploration, not research)
+
+`mdget crawl` follows links breadth-first from a starting page. Use it when you want to **explore** an entire site or section — not for targeted research where you know (or can discover) the specific pages you need.
 
 ```sh
-mdget https://example.com/docs -o docs.md
-# later
-cat docs.md | llm "Extract all API endpoints from this document"
+mdget crawl --max-pages 10 --depth 1 https://docs.example.com/section
 ```
 
-## Crawling
-
-Crawl a documentation site and save each page:
-
-```sh
-mdget crawl --output-dir ./docs --depth 2 --max-pages 100 https://docs.example.com
-```
-
-Crawl to stdout (pages delimited by YAML frontmatter fences):
-
-```sh
-mdget crawl https://docs.example.com | llm "Summarize these docs"
-```
+The crawler only follows `<a href>` links and skips static assets (.css, .js, .woff2, images, etc.). Use `--path-prefix` to restrict to a URL path. Run `mdget crawl --help` for all options.
 
 ## MCP Server
 
-mdget can also run as an MCP server, giving you direct tool access without shelling out:
+If mdget is configured as an MCP server, you'll have tools like `fetch_markdown`, `fetch_metadata`, `batch_fetch`, and `crawl_site` available directly. The same principles apply — prefer targeted individual fetches over bulk operations.
 
-```sh
-mdget serve    # start MCP server on stdio
-```
-
-Add to `.claude/settings.json` or `.mcp.json`:
-
+MCP setup (in `.mcp.json`):
 ```json
 {
   "mcpServers": {
@@ -145,12 +90,10 @@ Add to `.claude/settings.json` or `.mcp.json`:
 }
 ```
 
-Available MCP tools: `fetch_markdown`, `fetch_metadata`, `batch_fetch`, `crawl_site`.
-
 ## Rules
 
-1. **Always prefer `mdget <URL>`** over `curl` or `WebFetch` when the goal is to read web page content as text or markdown.
-2. **If mdget is configured as an MCP server**, prefer the MCP tools (`fetch_markdown`, `fetch_metadata`, `batch_fetch`, `crawl_site`) over the CLI for programmatic access.
-3. **Pipe-friendly by default.** When you need to chain mdget output into another command, just pipe stdout -- no extra flags needed.
-4. **Use `--raw` sparingly.** Only use it when you need the complete HTML structure (e.g., scraping navigation, footers, or non-article pages). For articles and documentation, the default readability mode produces cleaner output.
-5. **Use `-o` or `-O` when the content will be referenced later.** If the content is only needed for a single immediate task, piping stdout is sufficient.
+1. **Always prefer mdget over curl or WebFetch** for reading web content. It's faster and produces cleaner output.
+2. **Start with `-q --no-images`** as your baseline flags. Add `--max-length` when pages might be large.
+3. **Fetch only the pages you need.** Read the index, pick URLs, fetch individually. Don't crawl when you can target.
+4. **Use `-m` for triage** when you have multiple candidate URLs and want to decide which to read in full.
+5. **Use `--raw` sparingly** — only when you need full HTML structure (navigation, footers, non-article pages).

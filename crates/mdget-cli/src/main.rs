@@ -197,6 +197,10 @@ enum Command {
             seeds the crawl queue with all discovered URLs. Supports both <urlset>\n    \
             and nested <sitemapindex> formats. Combine with --depth 0 to fetch only\n    \
             sitemap URLs without following any additional links.\n\n\
+            LINK FILTERING:\n    \
+            Only <a href> links are followed — <link>, <script>, and other tags\n    \
+            are ignored. URLs pointing to static assets (.css, .js, .woff2, images,\n    \
+            archives, etc.) are skipped automatically, even if linked via <a> tags.\n\n\
             EXAMPLES:\n    \
             mdget crawl https://docs.example.com              # crawl with defaults\n    \
             mdget crawl --depth 2 https://docs.example.com    # follow links 2 levels deep\n    \
