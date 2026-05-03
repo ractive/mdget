@@ -115,7 +115,7 @@ where
         .with_context(|| format!("start URL has no host: {start_url}"))?
         .to_lowercase();
     let mut accepted_hosts: HashSet<String> = HashSet::new();
-    accepted_hosts.insert(start_host.clone());
+    accepted_hosts.insert(start_host);
 
     let user_agent = options
         .fetch_options

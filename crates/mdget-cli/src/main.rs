@@ -1029,35 +1029,44 @@ mod tests {
     fn test_output_path_root_url() {
         let url = url::Url::parse("https://example.com/").unwrap();
         let path = url_to_output_path(&url, "/out", false);
-        assert_eq!(path, PathBuf::from("/out/index.md"));
+        assert_eq!(path, PathBuf::from("/out").join("index.md"));
     }
 
     #[test]
     fn test_output_path_simple_page() {
         let url = url::Url::parse("https://example.com/about").unwrap();
         let path = url_to_output_path(&url, "/out", false);
-        assert_eq!(path, PathBuf::from("/out/about.md"));
+        assert_eq!(path, PathBuf::from("/out").join("about.md"));
     }
 
     #[test]
     fn test_output_path_nested() {
         let url = url::Url::parse("https://example.com/docs/api/reference").unwrap();
         let path = url_to_output_path(&url, "/out", false);
-        assert_eq!(path, PathBuf::from("/out/docs/api/reference.md"));
+        assert_eq!(
+            path,
+            PathBuf::from("/out")
+                .join("docs")
+                .join("api")
+                .join("reference.md")
+        );
     }
 
     #[test]
     fn test_output_path_trailing_slash() {
         let url = url::Url::parse("https://example.com/docs/").unwrap();
         let path = url_to_output_path(&url, "/out", false);
-        assert_eq!(path, PathBuf::from("/out/docs/index.md"));
+        assert_eq!(path, PathBuf::from("/out").join("docs").join("index.md"));
     }
 
     #[test]
     fn test_output_path_with_host() {
         let url = url::Url::parse("https://example.com/page").unwrap();
         let path = url_to_output_path(&url, "/out", true);
-        assert_eq!(path, PathBuf::from("/out/example.com/page.md"));
+        assert_eq!(
+            path,
+            PathBuf::from("/out").join("example.com").join("page.md")
+        );
     }
 
     #[test]
@@ -1065,7 +1074,7 @@ mod tests {
         let url = url::Url::parse("https://example.com/../../etc/passwd").unwrap();
         let path = url_to_output_path(&url, "/out", false);
         // ".." segments should be filtered out
-        assert!(path.starts_with("/out"));
+        assert!(path.starts_with(std::path::Path::new("/out")));
         assert!(!path.to_string_lossy().contains(".."));
     }
 
@@ -1073,22 +1082,22 @@ mod tests {
     fn test_output_path_filters_dot() {
         let url = url::Url::parse("https://example.com/./page").unwrap();
         let path = url_to_output_path(&url, "/out", false);
-        assert!(path.starts_with("/out"));
-        assert_eq!(path, PathBuf::from("/out/page.md"));
+        assert!(path.starts_with(std::path::Path::new("/out")));
+        assert_eq!(path, PathBuf::from("/out").join("page.md"));
     }
 
     #[test]
     fn test_output_path_replaces_extension() {
         let url = url::Url::parse("https://example.com/page.html").unwrap();
         let path = url_to_output_path(&url, "/out", false);
-        assert_eq!(path, PathBuf::from("/out/page.md"));
+        assert_eq!(path, PathBuf::from("/out").join("page.md"));
     }
 
     #[test]
     fn test_output_path_empty_path() {
         let url = url::Url::parse("https://example.com").unwrap();
         let path = url_to_output_path(&url, "/out", false);
-        assert_eq!(path, PathBuf::from("/out/index.md"));
+        assert_eq!(path, PathBuf::from("/out").join("index.md"));
     }
 
     #[test]
@@ -1096,7 +1105,7 @@ mod tests {
         // %2e%2e is decoded to ".." by the url crate, so should also be filtered
         let url = url::Url::parse("https://example.com/%2e%2e/etc/passwd").unwrap();
         let path = url_to_output_path(&url, "/out", false);
-        assert!(path.starts_with("/out"));
+        assert!(path.starts_with(std::path::Path::new("/out")));
         assert!(!path.to_string_lossy().contains(".."));
     }
 }

@@ -117,6 +117,11 @@ fn yaml_escape_string(s: &str) -> String {
             '\r' => out.push_str("\\r"),
             '\t' => out.push_str("\\t"),
             '\0' => out.push_str("\\0"),
+            // Other ASCII control characters (0x01–0x08, 0x0B, 0x0C, 0x0E–0x1F, 0x7F) are
+            // invalid in YAML double-quoted strings and must be escaped with \uXXXX.
+            ch if ch.is_control() => {
+                let _ = write!(out, "\\u{:04X}", ch as u32);
+            }
             _ => out.push(ch),
         }
     }
@@ -1218,5 +1223,20 @@ mod tests {
         assert_eq!(yaml_escape_string("tab\there"), "tab\\there");
         assert_eq!(yaml_escape_string("cr\rhere"), "cr\\rhere");
         assert_eq!(yaml_escape_string("null\0here"), "null\\0here");
+    }
+
+    #[test]
+    fn test_yaml_escape_other_control_characters() {
+        // ASCII control chars not covered by named escapes use \uXXXX format.
+        // 0x01 (SOH), 0x08 (BS), 0x0B (VT), 0x0C (FF), 0x1F (US), 0x7F (DEL)
+        assert_eq!(yaml_escape_string("\x01"), "\\u0001");
+        assert_eq!(yaml_escape_string("\x08"), "\\u0008");
+        assert_eq!(yaml_escape_string("\x0B"), "\\u000B");
+        assert_eq!(yaml_escape_string("\x0C"), "\\u000C");
+        assert_eq!(yaml_escape_string("\x1F"), "\\u001F");
+        assert_eq!(yaml_escape_string("\x7F"), "\\u007F");
+        // Named escapes are still readable, not hex-escaped.
+        assert_eq!(yaml_escape_string("\n"), "\\n");
+        assert_eq!(yaml_escape_string("\t"), "\\t");
     }
 }
