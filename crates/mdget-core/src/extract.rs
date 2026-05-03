@@ -55,10 +55,17 @@ pub fn extract(html: &str, url: &Url, options: &ExtractOptions) -> anyhow::Resul
     let metadata = Metadata {
         title: title.clone(),
         byline: article.byline.filter(|s| !s.is_empty()),
-        excerpt: article
-            .excerpt
-            .filter(|s| !s.is_empty())
-            .or_else(|| extract_meta_description(html)),
+        excerpt: {
+            let raw_excerpt = article
+                .excerpt
+                .filter(|s| !s.is_empty())
+                .or_else(|| extract_meta_description(html));
+            match raw_excerpt {
+                Some(desc) if looks_like_junk_description(&desc) => extract_body_excerpt(&markdown),
+                Some(desc) => Some(desc),
+                None => extract_body_excerpt(&markdown),
+            }
+        },
         published: article.published_time.filter(|s| !s.is_empty()),
         language: article.lang.filter(|s| !s.is_empty()),
         site_name: article.site_name.filter(|s| !s.is_empty()),
@@ -576,6 +583,67 @@ fn extract_meta_description(html: &str) -> Option<String> {
     }
 
     og_description
+}
+
+/// Returns true if a meta description looks like junk (tag list, too short, no real sentences).
+fn looks_like_junk_description(desc: &str) -> bool {
+    let trimmed = desc.trim();
+
+    // Empty or extremely short
+    if trimmed.len() < 10 {
+        return true;
+    }
+
+    // Fewer than 3 words — likely a tag list or site name
+    let word_count = trimmed.split_whitespace().count();
+    if word_count < 3 {
+        return true;
+    }
+
+    // Words that look like hyphenated tag lists, e.g. "github crates-io docs-rs rust-lang"
+    let hyphenated_words = trimmed
+        .split_whitespace()
+        .filter(|w| w.contains('-') && w.chars().all(|c| c.is_alphanumeric() || c == '-'))
+        .count();
+    if word_count <= 5 && hyphenated_words > word_count / 2 {
+        return true;
+    }
+
+    false
+}
+
+/// Extract the first ~200 characters of article body as a fallback excerpt.
+fn extract_body_excerpt(markdown: &str) -> Option<String> {
+    // Skip leading whitespace and headings
+    let text: String = markdown
+        .lines()
+        .filter(|line| {
+            let trimmed = line.trim();
+            !trimmed.is_empty() && !trimmed.starts_with('#')
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+
+    let text = text.trim();
+    if text.is_empty() {
+        return None;
+    }
+
+    if text.len() <= 200 {
+        return Some(text.to_string());
+    }
+
+    // Break at sentence or word boundary
+    let slice = &text[..find_char_boundary(text, 200)];
+    // Try to break at sentence end
+    if let Some(pos) = slice.rfind(". ") {
+        return Some(format!("{}.", &slice[..pos]));
+    }
+    // Break at word boundary
+    if let Some(pos) = slice.rfind(' ') {
+        return Some(format!("{}…", &slice[..pos]));
+    }
+    Some(format!("{slice}…"))
 }
 
 /// Find `needle` (ASCII bytes, matched case-insensitively) in `haystack`
@@ -1268,6 +1336,74 @@ mod tests {
     #[test]
     fn test_word_count_with_newlines() {
         assert_eq!(word_count("hello\nworld\n\nfoo"), 3);
+    }
+
+    // --- looks_like_junk_description unit tests ---
+
+    #[test]
+    fn test_junk_hyphenated_tag_list() {
+        assert!(looks_like_junk_description("github crates-io docs-rs"));
+    }
+
+    #[test]
+    fn test_junk_single_word() {
+        assert!(looks_like_junk_description("foo"));
+    }
+
+    #[test]
+    fn test_junk_too_short() {
+        assert!(looks_like_junk_description("ab"));
+    }
+
+    #[test]
+    fn test_junk_empty() {
+        assert!(looks_like_junk_description(""));
+    }
+
+    #[test]
+    fn test_not_junk_proper_description() {
+        assert!(!looks_like_junk_description(
+            "This is a proper description of the article content."
+        ));
+    }
+
+    // --- extract_body_excerpt unit tests ---
+
+    #[test]
+    fn test_body_excerpt_skips_headings() {
+        let markdown = "# Main Title\n\nThis is the first paragraph of content that should be extracted as the excerpt.";
+        let result = extract_body_excerpt(markdown);
+        assert!(result.is_some());
+        let excerpt = result.unwrap();
+        assert!(!excerpt.contains("# Main Title"));
+        assert!(excerpt.contains("first paragraph"));
+    }
+
+    #[test]
+    fn test_body_excerpt_empty_markdown() {
+        assert_eq!(extract_body_excerpt(""), None);
+        assert_eq!(extract_body_excerpt("# Only a heading\n"), None);
+    }
+
+    #[test]
+    fn test_body_excerpt_truncates_long_text() {
+        let long_para = "word ".repeat(100);
+        let markdown = format!("# Title\n\n{long_para}");
+        let result = extract_body_excerpt(&markdown);
+        assert!(result.is_some());
+        let excerpt = result.unwrap();
+        assert!(
+            excerpt.len() <= 210,
+            "excerpt should be ~200 chars, got {}",
+            excerpt.len()
+        );
+    }
+
+    #[test]
+    fn test_body_excerpt_short_text_returned_as_is() {
+        let markdown = "A short paragraph.";
+        let result = extract_body_excerpt(markdown);
+        assert_eq!(result, Some("A short paragraph.".to_string()));
     }
 
     // --- format_metadata_frontmatter unit tests ---
