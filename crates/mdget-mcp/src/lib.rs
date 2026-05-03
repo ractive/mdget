@@ -258,7 +258,7 @@ impl MdgetServer {
     /// contains the URL, content (or error), and title.
     #[tool(
         name = "batch_fetch",
-        description = "Fetch multiple web pages in parallel and return all results. Each result contains the URL, title, and either content or error message."
+        description = "Fetch multiple web pages in parallel and return all results. Each result contains url, title, content (or error), plus metadata: word_count, excerpt, language, byline."
     )]
     fn batch_fetch(
         &self,

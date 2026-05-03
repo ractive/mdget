@@ -193,6 +193,12 @@ where
                 on_page(&CrawlProgress::SitemapLoaded { url_count: count });
 
                 for su in sitemap_urls {
+                    // Filter by path prefix if set.
+                    if let Some(ref prefix) = options.path_prefix
+                        && !su.path().starts_with(prefix.as_str())
+                    {
+                        continue;
+                    }
                     // Apply robots check.
                     if let Some(ref mut cache) = robots_cache
                         && !cache.is_allowed(&su, &aux_client)
