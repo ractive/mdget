@@ -6,7 +6,7 @@ tags:
   - strategy
   - positioning
   - ai-agents
-status: planned
+status: completed
 ---
 
 ## Context
@@ -64,6 +64,8 @@ This project is a case study in how AI coding assistants push toward complexity:
 Worth keeping in mind for future projects.
 
 ## Decision needed
+
+> **Outcome (2026-05-03, recorded 2026-08-30):** project parked. See [[decision-log]] entry "Project parked" for the reasoning.
 
 Which direction to pursue (or whether to stop). Factors:
 - Personal interest and motivation
