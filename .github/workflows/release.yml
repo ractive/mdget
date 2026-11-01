@@ -103,6 +103,27 @@ jobs:
         if: "!matrix.cross && !matrix.skip_tests"
         run: cargo run --release --target ${{ matrix.target }} -p mdget-cli -- --help
 
+      # winget's validator runs the binary without arguments and fails any
+      # non-zero exit.
+      - name: Verify bare invocation exits 0
+        if: "!matrix.cross && !matrix.skip_tests"
+        run: cargo run --release --target ${{ matrix.target }} -p mdget-cli
+
+      # Same check as ci.yml's windows-release job, on the binary that ships:
+      # an env RUSTFLAGS would silently drop .cargo/config.toml's +crt-static.
+      - name: No dynamic C runtime imports (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          exe="target/$TARGET/release/mdget.exe"
+          if grep -a -o -i -E '[a-z0-9_.-]+\.dll' "$exe" | sort -u -f |
+              grep -i -E '^(vcruntime|msvcp|api-ms-win-crt-)'; then
+            echo "::error::$exe imports the dynamic MSVC C runtime"
+            exit 1
+          fi
+
       - name: Package (Unix)
         if: runner.os != 'Windows'
         run: |
