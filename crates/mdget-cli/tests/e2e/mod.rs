@@ -47,11 +47,27 @@ fn cli_prints_version() {
 }
 
 // ---------------------------------------------------------------------------
-// 3. cli_missing_url_exits_with_error
+// 3. cli_no_arguments_prints_short_help / cli_missing_url_exits_with_error
 // ---------------------------------------------------------------------------
+/// A bare `mdget` prints exactly the `-h` page on stdout and exits 0: winget's
+/// validator runs the binary without arguments and fails any non-zero exit.
+#[test]
+fn cli_no_arguments_prints_short_help() {
+    let bare = mdget().output().unwrap();
+    assert_eq!(bare.status.code(), Some(0), "bare `mdget` must exit 0");
+    let stdout = String::from_utf8(bare.stdout).unwrap();
+    assert!(stdout.contains("Usage: mdget"), "stdout: {stdout}");
+    assert!(bare.stderr.is_empty(), "stderr must stay empty");
+
+    let short = mdget().arg("-h").output().unwrap();
+    assert_eq!(stdout, String::from_utf8(short.stdout).unwrap());
+}
+
 #[test]
 fn cli_missing_url_exits_with_error() {
+    // Arguments but no input is still an error.
     mdget()
+        .arg("-q")
         .assert()
         .failure()
         .stderr(predicate::str::contains("no inputs provided"));

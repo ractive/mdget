@@ -43,3 +43,12 @@ See [[research/dom-query-escaping]] for full research.
 **Meta-lesson:** Treat "stop and evaluate" as a valid iteration. Question the core value before accepting feature suggestions from the coding assistant, and check what the harness already provides natively.
 
 **Revisit if:** a concrete consumer appears (ff-rdp reader view, a non-Claude agent harness lacking fetch, a docs-archiving/RAG need), or WebFetch-style tools regress in quality/availability.
+
+## 2026-11-01: Windows binaries link the C runtime statically; a bare `mdget` prints `-h` and exits 0
+
+**Context:** winget's validator installs a release zip and runs each executable without arguments. For the sibling tools hoppy and ff-rdp it logged exit 0xC0000135 (STATUS_DLL_NOT_FOUND): MSVC Rust binaries import `VCRUNTIME140.dll` by default, which ships with the VC++ Redistributable, not with Windows. mdget is built the same way. The validator also labels any non-zero exit `Validation-Executable-Error`, and a bare `mdget` failed with "no inputs provided" (exit 1).
+
+**Decision:**
+1. `.cargo/config.toml` sets `-C target-feature=+crt-static` for `cfg(all(target_os = "windows", target_env = "msvc"))`. `ring` (via rustls) builds its C code through `cc`, which honours the flag. An env `RUSTFLAGS` would replace the config value; no workflow sets one.
+2. CI's `windows-release` job builds both Windows release targets, uploads each `mdget.exe`, and fails if one imports `vcruntime*.dll`, `msvcp*.dll` or `api-ms-win-crt-*.dll`. The release workflow has no dry-run path, so this is where the property is checked.
+3. A bare `mdget` (no arguments at all) runs as `mdget -h`: the short help on stdout, exit 0. Arguments without an input (`mdget -q`, an empty `-i` file) still fail with "no inputs provided", exit 1.
