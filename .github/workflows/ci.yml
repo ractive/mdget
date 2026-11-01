@@ -41,3 +41,40 @@ jobs:
       - run: cargo test --workspace
       - name: Verify CLI runs
         run: cargo run -p mdget-cli -- --help
+
+  # Builds both Windows release binaries, uploads them, and fails when one
+  # imports the dynamic MSVC C runtime, which a clean Windows lacks
+  # (.cargo/config.toml links it statically). The upload comes first so a
+  # failing binary can still be inspected.
+  windows-release:
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [x86_64-pc-windows-msvc, aarch64-pc-windows-msvc]
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7 # stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          key: ${{ matrix.target }}
+      - run: cargo build --release -p mdget-cli --target ${{ matrix.target }}
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: mdget-${{ matrix.target }}
+          path: target/${{ matrix.target }}/release/mdget.exe
+      - name: No dynamic C runtime imports
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          exe="target/$TARGET/release/mdget.exe"
+          dlls=$(grep -a -o -i -E '[a-z0-9_.-]+\.dll' "$exe" | sort -u -f)
+          echo "DLL names in $exe:"
+          echo "$dlls"
+          if echo "$dlls" | grep -i -E '^(vcruntime|msvcp|api-ms-win-crt-)'; then
+            echo "::error::$exe imports the dynamic MSVC C runtime"
+            exit 1
+          fi
