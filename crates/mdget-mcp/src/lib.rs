@@ -421,6 +421,8 @@ impl MdgetServer {
 
 // ── ServerHandler impl ──────────────────────────────────────────────────
 
+// The macro generates async trait methods that never await (clippy 1.99).
+#[allow(clippy::unused_async_trait_impl)]
 #[tool_handler]
 impl ServerHandler for MdgetServer {
     fn get_info(&self) -> ServerInfo {

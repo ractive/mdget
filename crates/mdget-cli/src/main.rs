@@ -319,7 +319,18 @@ struct ProcessedInput {
 }
 
 fn main() -> anyhow::Result<()> {
-    let mut cli = Cli::parse();
+    // A bare `mdget` is run as `mdget -h`: the short help on stdout, exit 0
+    // (clap exits after printing it). Installers that smoke-test the binary
+    // without arguments, such as winget's validator, fail any non-zero exit.
+    // Arguments without an input (`mdget -q`) stay the "no inputs" error.
+    let mut args: Vec<std::ffi::OsString> = std::env::args_os().collect();
+    if args.len() <= 1 {
+        if args.is_empty() {
+            args.push("mdget".into());
+        }
+        args.push("-h".into());
+    }
+    let mut cli = Cli::parse_from(args);
 
     match &cli.command {
         Some(Command::Crawl {

@@ -212,14 +212,14 @@ mod tests {
     fn link_tag_preload_font_not_extracted() {
         let html = r#"<link rel="preload" href="/font.woff2" as="font">"#;
         let links = extract_links(html, &base());
-        assert!(links.is_empty());
+        assert_eq!(links, Vec::<Url>::new());
     }
 
     #[test]
     fn link_tag_icon_not_extracted() {
         let html = r#"<link rel="icon" href="/favicon.ico">"#;
         let links = extract_links(html, &base());
-        assert!(links.is_empty());
+        assert_eq!(links, Vec::<Url>::new());
     }
 
     // --- is_static_asset_url ---
@@ -363,28 +363,28 @@ mod tests {
     fn fragment_only_link_is_skipped() {
         let html = r##"<a href="#top">top</a>"##;
         let links = extract_links(html, &base());
-        assert!(links.is_empty());
+        assert_eq!(links, Vec::<Url>::new());
     }
 
     #[test]
     fn mailto_is_filtered_out() {
         let html = r#"<a href="mailto:user@example.com">email</a>"#;
         let links = extract_links(html, &base());
-        assert!(links.is_empty());
+        assert_eq!(links, Vec::<Url>::new());
     }
 
     #[test]
     fn javascript_is_filtered_out() {
         let html = r#"<a href="javascript:void(0)">click</a>"#;
         let links = extract_links(html, &base());
-        assert!(links.is_empty());
+        assert_eq!(links, Vec::<Url>::new());
     }
 
     #[test]
     fn tel_is_filtered_out() {
         let html = r#"<a href="tel:+1234567890">call</a>"#;
         let links = extract_links(html, &base());
-        assert!(links.is_empty());
+        assert_eq!(links, Vec::<Url>::new());
     }
 
     #[test]
@@ -427,7 +427,7 @@ mod tests {
     fn empty_href_skipped() {
         let html = r#"<a href="">empty</a>"#;
         let links = extract_links(html, &base());
-        assert!(links.is_empty());
+        assert_eq!(links, Vec::<Url>::new());
     }
 
     #[test]

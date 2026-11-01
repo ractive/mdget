@@ -984,7 +984,7 @@ mod tests {
         let url = Url::parse("https://example.com/article").unwrap();
         let opts = ExtractOptions { raw: true };
         let result = extract(SIMPLE_HTML, &url, &opts).unwrap();
-        assert!(!result.markdown.is_empty());
+        assert_ne!(result.markdown, "");
     }
 
     #[test]
