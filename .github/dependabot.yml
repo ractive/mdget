@@ -1,0 +1,27 @@
+# Dependabot version updates.
+#
+# Every update PR goes through ci.yml, so the quality gates (including
+# `cargo deny check`) judge it like any other PR. Majors arrive as
+# individual PRs; minor/patch updates are grouped per ecosystem to keep the
+# PR count low.
+#
+# - github-actions: third-party actions are SHA-pinned with a `# vX.Y.Z`
+#   comment; Dependabot updates both.
+# - cargo: one workspace at the root.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      github-actions:
+        update-types: [minor, patch]
+
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      cargo-minor-patch:
+        update-types: [minor, patch]
