@@ -52,3 +52,12 @@ See [[research/dom-query-escaping]] for full research.
 1. `.cargo/config.toml` sets `-C target-feature=+crt-static` for `cfg(all(target_os = "windows", target_env = "msvc"))`. `ring` (via rustls) builds its C code through `cc`, which honours the flag. An env `RUSTFLAGS` would replace the config value; no workflow sets one.
 2. CI's `windows-release` job builds both Windows release targets, uploads each `mdget.exe`, and fails if one imports `vcruntime*.dll`, `msvcp*.dll` or `api-ms-win-crt-*.dll`. The release workflow has no dry-run path, so this is where the property is checked.
 3. A bare `mdget` (no arguments at all) runs as `mdget -h`: the short help on stdout, exit 0. Arguments without an input (`mdget -q`, an empty `-i` file) still fail with "no inputs provided", exit 1.
+
+## 2026-11-12: reqwest 0.13 with its default `rustls` TLS (aws-lc-rs, OS trust store)
+
+**Context:** The Rust 1.100 dependency bump moved reqwest 0.12 → 0.13, which dropped the `rustls-tls` feature. Its `rustls` feature uses the aws-lc-rs crypto provider (not ring) and verifies certificates with `rustls-platform-verifier`, i.e. against the operating system's trust store instead of the bundled webpki roots.
+
+**Decision:**
+1. Use reqwest's `rustls` feature, as hoppy does. hoppy ships the same seven release targets (musl and aarch64 via `cross`, both Windows MSVC targets) with aws-lc-rs and `+crt-static`, and its release check for dynamic C runtime imports passes. This supersedes the "ring (via rustls)" note in the 2026-11-01 entry: aws-lc-sys builds its C code through `cc` and honours `crt-static`; CI's `windows-release` job still checks the property.
+2. Behaviour change: HTTPS now trusts the OS certificate store (corporate CAs work; a minimal Linux without a CA bundle no longer does).
+3. `deny.toml` allows `CDLA-Permissive-2.0` (webpki-root-certs, via rustls-platform-verifier) and adds per-crate MPL-2.0 exceptions for Servo's CSS stack (cssparser, cssparser-macros, dtoa-short, selectors) that dom_smoothie uses through dom_query. `cargo deny check`, the release workflow's security gate, already failed on these MPL-2.0 crates before the bump.

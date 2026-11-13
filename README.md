@@ -8,6 +8,8 @@ Fetch a web page, extract the main content using a readability algorithm (like b
 cargo install mdget-cli
 ```
 
+HTTPS certificates are verified against the operating system's certificate store, so corporate or custom CAs installed on the system work. In containers and minimal Linux installs, install the CA certificates first (for example `apt-get install ca-certificates` on Debian/Ubuntu, `apk add ca-certificates` on Alpine), or HTTPS fetches will fail.
+
 ## Usage
 
 ```sh

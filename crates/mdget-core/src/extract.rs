@@ -607,11 +607,7 @@ fn looks_like_junk_description(desc: &str) -> bool {
         .split_whitespace()
         .filter(|w| w.contains('-') && w.chars().all(|c| c.is_alphanumeric() || c == '-'))
         .count();
-    if word_count <= 5 && hyphenated_words > word_count / 2 {
-        return true;
-    }
-
-    false
+    word_count <= 5 && hyphenated_words > word_count / 2
 }
 
 /// Extract the first ~200 characters of article body as a fallback excerpt.

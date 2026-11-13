@@ -17,11 +17,30 @@ allow = [
     "Zlib",
     "Unicode-3.0",
     "Unicode-DFS-2016",
+    # webpki-root-certs (via reqwest 0.13's rustls-platform-verifier) ships
+    # the Mozilla CCADB root list under a Community Data License.
+    "CDLA-Permissive-2.0",
 ]
 confidence-threshold = 0.8
 
 [licenses.private]
 ignore = true
+
+# MPL-2.0 (file-level copyleft; used unmodified, source on crates.io):
+# Servo's CSS selector stack, which dom_smoothie uses through dom_query.
+# Allowed for exactly these crates, not added to the allow-list above.
+[[licenses.exceptions]]
+crate = "cssparser"
+allow = ["MPL-2.0"]
+[[licenses.exceptions]]
+crate = "cssparser-macros"
+allow = ["MPL-2.0"]
+[[licenses.exceptions]]
+crate = "dtoa-short"
+allow = ["MPL-2.0"]
+[[licenses.exceptions]]
+crate = "selectors"
+allow = ["MPL-2.0"]
 
 [bans]
 multiple-versions = "warn"
